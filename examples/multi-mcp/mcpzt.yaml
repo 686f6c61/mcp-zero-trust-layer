@@ -1,0 +1,171 @@
+project:
+  name: multi-mcp-use-cases
+  environment: development
+
+runtime:
+  mode: proxy
+  default_decision: deny
+  dry_run: false
+
+auth:
+  mode: none
+
+servers:
+  - name: github
+    transport: http
+    upstream: http://localhost:3001/mcp
+
+  - name: postgres
+    transport: http
+    upstream: http://localhost:3002/mcp
+
+  - name: filesystem
+    transport: http
+    upstream: http://localhost:3003/mcp
+
+  - name: crm
+    transport: http
+    upstream: http://localhost:3004/mcp
+
+capability_mappings:
+  github:
+    tools:
+      github.search_issues:
+        action: code.read
+        risk: low
+        access: read
+        resource_type: issue
+      github.merge_pull_request:
+        action: code.merge
+        risk: critical
+        access: write
+        resource_type: repository
+      github.delete_repository:
+        action: code.delete
+        risk: critical
+        access: delete
+        resource_type: repository
+
+  postgres:
+    tools:
+      postgres.query:
+        action: db.read
+        risk: medium
+        access: read
+        resource_type: database
+      postgres.drop_table:
+        action: db.admin
+        risk: critical
+        access: write
+        resource_type: database
+
+  filesystem:
+    tools:
+      filesystem.read_file:
+        action: filesystem.read
+        risk: low
+        access: read
+        resource_type: file
+    resources:
+      file:///workspace/README.md:
+        action: filesystem.read
+        risk: low
+        access: read
+        resource_type: file
+      file:///etc/passwd:
+        action: filesystem.read
+        risk: critical
+        access: read
+        resource_type: file
+
+  crm:
+    tools:
+      crm.get_customer:
+        action: crm.read
+        risk: medium
+        access: read
+        resource_type: customer
+        data_classification: confidential
+
+policies:
+  - id: allow-github-read
+    effect: allow
+    match:
+      server: github
+      action: code.read
+
+  - id: deny-github-delete
+    effect: deny
+    match:
+      server: github
+      capability: github.delete_repository
+
+  - id: github-critical-needs-approval
+    effect: require_approval
+    match:
+      server: github
+      risk: critical
+
+  - id: show-postgres-query
+    effect: allow
+    match:
+      server: postgres
+      method: tools/list
+      capability: postgres.query
+
+  - id: allow-readonly-sql
+    effect: allow
+    match:
+      server: postgres
+      method: tools/call
+      action: db.read
+    validators:
+      - name: sql_read_only
+
+  - id: allow-safe-filesystem-resource
+    effect: allow
+    match:
+      server: filesystem
+      capability_type: resource
+      capability: file:///workspace/README.md
+
+  - id: allow-safe-filesystem-read
+    effect: allow
+    match:
+      server: filesystem
+      capability_type: tool
+      capability: filesystem.read_file
+    validators:
+      - name: filesystem_path
+        options:
+          path_arg: path
+          allowed_roots:
+            - ./workspace
+          read_only: true
+
+  - id: allow-crm-read
+    effect: allow
+    match:
+      server: crm
+      action: crm.read
+
+  - id: redact-crm-pii
+    effect: redact
+    match:
+      server: crm
+      capability: crm.get_customer
+    when:
+      output.email:
+        exists: true
+    output:
+      redact_fields:
+        - email
+        - api_key
+
+audit:
+  destination: file
+  path: ./mcpzt-audit.jsonl
+
+approvals:
+  path: ./mcpzt-approvals.json
+  default_ttl_seconds: 900

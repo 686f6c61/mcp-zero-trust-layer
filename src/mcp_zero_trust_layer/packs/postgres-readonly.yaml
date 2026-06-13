@@ -1,0 +1,20 @@
+capability_mappings:
+  postgres:
+    tools:
+      postgres.query:
+        action: db.read
+        risk: medium
+        access: read
+        resource_type: database
+
+policies:
+  - id: postgres-readonly-sql
+    effect: allow
+    match:
+      server: postgres
+      action: db.read
+    validators:
+      - name: sql_read_only
+        options:
+          query_arg: query
+

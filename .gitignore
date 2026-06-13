@@ -1,0 +1,95 @@
+# Operating system and editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python environments and dependency installs
+.venv/
+venv/
+env/
+ENV/
+__pypackages__/
+
+# Python bytecode and tooling caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Build, packaging and release artifacts
+dist/
+build/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+wheels/
+
+# Node/npm caches used by local MCP server smoke tests
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local environment files and secrets
+.env
+.env.*
+!.env.example
+secrets/
+.secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+
+# Local MCPZT configs and runtime state
+/mcpzt.yaml
+/mcpzt.*.yaml
+/*.local.yaml
+/*.secret.yaml
+mcpzt-audit*.jsonl
+audit*.jsonl
+*.audit.jsonl
+mcpzt-approvals*.json
+mcpzt-state/
+.mcpzt/
+.mcpzt-capabilities/
+
+# Local databases and scratch data
+*.sqlite
+*.sqlite3
+*.db
+tmp/
+temp/
+.tmp/
+
+# Internal construction and planning material.
+# These files can exist locally, but they are not public project docs.
+/docs/MCP_Zero_Trust_Layer_PDR.md
+/docs/BUILD_PLAN.md
+/docs/PHASES.md
+/MCP_Zero_Trust_Layer_PDR.md
+/*_PDR.md
+/SECURITY_QUALITY_AUDIT.md
+/internal/
+/notes/
+/scratch/

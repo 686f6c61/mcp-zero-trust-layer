@@ -1,0 +1,51 @@
+project:
+  name: protected-http-upstream
+  environment: development
+
+runtime:
+  mode: proxy
+  default_decision: deny
+  dry_run: false
+
+auth:
+  mode: api_key
+  header: x-api-key
+  token_env: MCPZT_API_KEY
+
+servers:
+  - name: github
+    transport: http
+    upstream: https://github-mcp.internal/mcp
+    upstream_headers:
+      Authorization: Bearer ${GITHUB_MCP_TOKEN}
+
+capability_mappings:
+  github:
+    tools:
+      github.search_issues:
+        action: code.read
+        risk: low
+        access: read
+        resource_type: issue
+      github.merge_pull_request:
+        action: code.merge
+        risk: critical
+        access: write
+        resource_type: repository
+
+policies:
+  - id: allow-github-read
+    effect: allow
+    match:
+      server: github
+      action: code.read
+
+  - id: critical-actions-need-approval
+    effect: require_approval
+    match:
+      server: github
+      risk: critical
+
+audit:
+  destination: file
+  path: ./mcpzt-audit.jsonl

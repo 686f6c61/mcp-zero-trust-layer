@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcpzt.fullname" . }}-config
+  labels:
+    app.kubernetes.io/name: {{ include "mcpzt.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  mcpzt.yaml: |
+{{ .Values.configYaml | indent 4 }}

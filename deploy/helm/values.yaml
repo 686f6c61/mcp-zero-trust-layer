@@ -1,0 +1,68 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/your-org/mcp-zero-trust-layer
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8765
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+secretEnv:
+  MCPZT_AUTH_TOKEN:
+    secretName: mcpzt-secrets
+    key: auth-token
+  GITHUB_MCP_TOKEN:
+    secretName: mcpzt-secrets
+    key: github-token
+
+configYaml: |
+  project:
+    name: production-mcp
+    environment: production
+
+  runtime:
+    mode: proxy
+    default_decision: deny
+    public_base_url: https://mcpzt.example.com
+    trusted_hosts:
+      - mcpzt.example.com
+
+  auth:
+    mode: static_token
+    token: env:MCPZT_AUTH_TOKEN
+
+  servers:
+    - name: github
+      transport: http
+      upstream: https://github-mcp.example.com/mcp
+      upstream_headers:
+        authorization: Bearer ${GITHUB_MCP_TOKEN}
+
+  audit:
+    destination: file
+    path: /var/lib/mcpzt/audit.jsonl
+    hash_chain: true
+
+  approvals:
+    path: /var/lib/mcpzt/approvals.json
+    default_ttl_seconds: 900
+
+  metrics:
+    enabled: true
+    path: /metrics
+
+  policies:
+    - id: deny-by-default-example
+      effect: deny
+      match:
+        capability_type: tool

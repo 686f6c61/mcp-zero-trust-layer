@@ -1,0 +1,35 @@
+services:
+  mcpzt:
+    image: ghcr.io/your-org/mcp-zero-trust-layer:0.1.0
+    command:
+      - run
+      - --config
+      - /etc/mcpzt/mcpzt.yaml
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8765"
+    ports:
+      - "8765:8765"
+    environment:
+      MCPZT_AUTH_TOKEN: ${MCPZT_AUTH_TOKEN:?set MCPZT_AUTH_TOKEN}
+      GITHUB_MCP_TOKEN: ${GITHUB_MCP_TOKEN:?set GITHUB_MCP_TOKEN}
+    volumes:
+      - ./mcpzt.yaml:/etc/mcpzt/mcpzt.yaml:ro
+      - mcpzt-state:/var/lib/mcpzt
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=2)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  mcpzt-state:

@@ -1,0 +1,59 @@
+project:
+  name: filesystem-safe
+  environment: development
+
+runtime:
+  mode: stdio
+  default_decision: deny
+  dry_run: false
+
+auth:
+  mode: none
+
+servers:
+  - name: filesystem
+    transport: stdio
+    command:
+      - npx
+      - -y
+      - "@modelcontextprotocol/server-filesystem"
+      - ./workspace
+
+capability_mappings:
+  filesystem:
+    tools:
+      filesystem.read_file:
+        action: filesystem.read
+        risk: low
+        access: read
+        resource_type: file
+      filesystem.write_file:
+        action: filesystem.write
+        risk: high
+        access: write
+        resource_type: file
+
+policies:
+  - id: allow-safe-filesystem-read
+    effect: allow
+    match:
+      server: filesystem
+      action: filesystem.read
+    validators:
+      - name: filesystem_path
+        options:
+          path_arg: path
+          allowed_roots:
+            - ./workspace
+          read_only: true
+
+  - id: writes-need-approval
+    effect: require_approval
+    match:
+      server: filesystem
+      action: filesystem.write
+
+audit:
+  destination: file
+  path: ./mcpzt-audit.jsonl
+

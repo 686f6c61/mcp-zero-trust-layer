@@ -1,0 +1,34 @@
+capability_mappings:
+  filesystem:
+    tools:
+      filesystem.read_file:
+        action: filesystem.read
+        risk: low
+        access: read
+        resource_type: file
+      filesystem.write_file:
+        action: filesystem.write
+        risk: high
+        access: write
+        resource_type: file
+
+policies:
+  - id: filesystem-safe-read
+    effect: allow
+    match:
+      server: filesystem
+      action: filesystem.read
+    validators:
+      - name: filesystem_path
+        options:
+          path_arg: path
+          allowed_roots:
+            - ./workspace
+          read_only: true
+
+  - id: filesystem-write-needs-approval
+    effect: require_approval
+    match:
+      server: filesystem
+      action: filesystem.write
+

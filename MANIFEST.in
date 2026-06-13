@@ -1,0 +1,13 @@
+include README.md
+include LICENSE
+include SECURITY.md
+include CONTRIBUTING.md
+include CHANGELOG.md
+include Dockerfile
+include constraints.txt
+include docs/MULTI_MCP_USE_CASES.md
+include docs/PRODUCTION.md
+include docs/PYPI_RELEASE.md
+recursive-include examples *.yaml
+recursive-include deploy *.yaml
+recursive-include deploy *.tpl

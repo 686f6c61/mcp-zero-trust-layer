@@ -1,0 +1,35 @@
+capability_mappings:
+  github:
+    tools:
+      github.search_issues:
+        action: code.read
+        risk: low
+        access: read
+        resource_type: issue
+      github.get_pull_request:
+        action: code.read
+        risk: low
+        access: read
+        resource_type: pull_request
+      github.merge_pull_request:
+        action: code.merge
+        risk: critical
+        access: write
+        resource_type: repository
+        tags:
+          - destructive
+          - requires-human-review
+
+policies:
+  - id: github-read-only
+    effect: allow
+    match:
+      server: github
+      action: code.read
+
+  - id: github-critical-actions-need-approval
+    effect: require_approval
+    match:
+      server: github
+      risk: critical
+

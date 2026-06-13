@@ -1,0 +1,41 @@
+project:
+  name: postgres-readonly
+  environment: development
+
+runtime:
+  mode: proxy
+  default_decision: deny
+  dry_run: false
+
+auth:
+  mode: none
+
+servers:
+  - name: postgres
+    transport: http
+    upstream: http://localhost:3002/mcp
+
+capability_mappings:
+  postgres:
+    tools:
+      postgres.query:
+        action: db.read
+        risk: medium
+        access: read
+        resource_type: database
+
+policies:
+  - id: allow-readonly-sql
+    effect: allow
+    match:
+      server: postgres
+      action: db.read
+    validators:
+      - name: sql_read_only
+        options:
+          query_arg: query
+
+audit:
+  destination: file
+  path: ./mcpzt-audit.jsonl
+
