@@ -13,6 +13,9 @@ from mcp_zero_trust_layer.validators import ValidatorEngine
 from mcp_zero_trust_layer.validators.input_policy import validate_input_policy
 
 
+LIST_METHODS = {"tools/list", "resources/list", "prompts/list"}
+
+
 class PolicyEngine:
     """Deterministic policy evaluator."""
 
@@ -39,12 +42,17 @@ class PolicyEngine:
 
         selected = self._select_by_precedence(matching)
         if selected:
-            if selected.effect not in {"deny", "hide"} and selected.input:
+            should_validate_request = (
+                selected.effect not in {"deny", "hide"} and context.method not in LIST_METHODS
+            )
+            if should_validate_request and selected.input:
                 validation = validate_input_policy(context.arguments, selected.input)
                 if not validation.passed:
-                    return self._validation_denied(selected, context, metadata, matching, validation.errors)
+                    return self._validation_denied(
+                        selected, context, metadata, matching, validation.errors
+                    )
 
-            if selected.effect not in {"deny", "hide"} and selected.validators:
+            if should_validate_request and selected.validators:
                 validation = self.validator_engine.validate(selected.validators, context)
                 if not validation.passed:
                     return self._validation_denied(

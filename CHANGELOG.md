@@ -4,7 +4,18 @@ All notable changes to MCP Zero Trust Layer will be documented here.
 
 The project follows SemVer during the `0.x` line with the caveat that minor versions may still change configuration shape before `1.0`.
 
-## 0.1.0 - Unreleased
+## 0.1.1 - 2026-06-13
+
+### Fixed
+
+- Fixed capability discovery filtering when an allowed policy includes call-time validators or required input fields. `tools/list`, `resources/list` and `prompts/list` now use policy matching to decide visibility without running validators that need request arguments.
+- Preserved call-time enforcement for the same policies: validators and `input` contracts still run for actual calls such as `tools/call`, so the fix restores discoverability without weakening runtime protection.
+
+### Tests
+
+- Added regression coverage for tools protected by `sql_read_only` validators and tools with `input.required_fields` so they remain visible during discovery.
+
+## 0.1.0 - 2026-06-13
 
 ### Added
 
