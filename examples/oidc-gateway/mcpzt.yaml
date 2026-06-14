@@ -1,0 +1,107 @@
+project:
+  name: oidc-gateway
+  environment: production
+
+runtime:
+  mode: gateway
+  default_decision: deny
+  dry_run: false
+  public_base_url: https://mcpzt.example.com
+  trusted_hosts:
+    - mcpzt.example.com
+  allowed_origins:
+    - https://mcp-client.example.com
+
+auth:
+  mode: oidc
+  issuer: https://issuer.example.com
+  audience: mcpzt
+  jwks_url: https://issuer.example.com/.well-known/jwks.json
+  required_scopes:
+    - mcp:read
+
+servers:
+  - name: github
+    transport: http
+    upstream: https://github-mcp.internal/mcp
+    upstream_headers:
+      Authorization: Bearer ${GITHUB_MCP_TOKEN}
+
+  - name: crm
+    transport: http
+    upstream: https://crm-mcp.internal/mcp
+    upstream_headers:
+      Authorization: Bearer ${CRM_MCP_TOKEN}
+
+capability_mappings:
+  github:
+    tools:
+      github.search_issues:
+        action: code.read
+        risk: low
+        access: read
+        resource_type: issue
+      github.merge_pull_request:
+        action: code.merge
+        risk: critical
+        access: write
+        resource_type: repository
+        tags:
+          - side-effect
+
+  crm:
+    tools:
+      crm.get_customer:
+        action: customer.read
+        risk: medium
+        access: read
+        resource_type: customer
+        data_classification: confidential
+
+policies:
+  - id: allow-github-read-for-eng
+    effect: allow
+    match:
+      server: github
+      action: code.read
+      group: engineering
+
+  - id: github-critical-actions-need-approval
+    effect: require_approval
+    match:
+      server: github
+      risk: critical
+
+  - id: allow-crm-read-for-support
+    effect: allow
+    match:
+      server: crm
+      action: customer.read
+      group: support
+
+  - id: redact-crm-confidential-output
+    effect: redact
+    match:
+      server: crm
+      data_classification: confidential
+    output:
+      redact_fields:
+        - email
+        - phone
+        - api_key
+        - token
+
+audit:
+  destination: file
+  path: /var/log/mcpzt/audit.jsonl
+  strict: true
+  hash_chain: true
+
+approvals:
+  backend: sqlite
+  path: /var/lib/mcpzt/approvals.sqlite3
+  default_ttl_seconds: 900
+
+metrics:
+  enabled: true
+  path: /metrics

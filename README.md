@@ -37,7 +37,7 @@ The important design point is that MCPZT is not a SaaS requirement. It runs loca
 
 Current line: `0.x` developer preview. Use `mcpzt version`, the PyPI project page or the GitHub releases page to confirm the exact installed version.
 
-The core path is implemented. The package has a CLI, YAML config validation, HTTP proxy mode, stdio wrapper mode, multi-MCP routing, policy evaluation, policy explanation, parameter-level controls, validators, approvals, output enforcement, capability discovery, deterministic scanning, audit logging with hash-chain verification, Prometheus metrics, authentication modes, secret references, client config generation, examples, deployment recipes, Docker packaging and PyPI-ready build metadata.
+The core path is implemented. The package has a CLI, YAML config validation, HTTP proxy mode, stdio wrapper mode, multi-MCP routing, policy evaluation, policy explanation, policy coverage analysis, parameter-level controls, validators, approvals, a self-hosted approval UI, file and SQLite approval storage, output enforcement, capability discovery, onboarding config generation, deterministic scanning, searchable audit logs with hash-chain verification, Prometheus metrics, authentication modes, secret references, client config generation, examples, deployment recipes, Docker packaging and PyPI-ready build metadata.
 
 The HTTP runtime supports MCP Streamable HTTP POST with JSON responses. GET SSE streams are not implemented in this release; the endpoint returns HTTP 405 for GET, which is allowed when a server does not offer an SSE stream. Request-scoped upstream SSE passthrough is intentionally left for a later release because streaming needs a separate security design.
 
@@ -179,6 +179,29 @@ mcpzt doctor --strict --config mcpzt.yaml
 mcpzt doctor --production --strict --config mcpzt.yaml
 ```
 
+For a real MCP server, you can start with onboarding instead of writing every mapping by hand. `mcpzt onboard` discovers the upstream capabilities, infers conservative metadata from names and descriptions, writes a complete starter config, and saves discovery snapshots for review. The generated file is meant to be read and edited by humans. It is a starting point, not a promise that every inferred risk label is perfect.
+
+```bash
+mcpzt onboard \
+  --server github=http://127.0.0.1:3001/mcp \
+  --server crm=http://127.0.0.1:3002/mcp \
+  --output mcpzt.yaml
+```
+
+If you already have a config with servers, run onboarding against that file. MCPZT will preserve the declared servers and runtime shape, then generate mappings and initial policies from the discovered capabilities.
+
+```bash
+mcpzt onboard --config existing-mcpzt.yaml --output onboarded-mcpzt.yaml
+```
+
+The onboarding policy set is deliberately cautious. Low-risk reads are allowed, high and critical capabilities require approval, destructive capabilities are hidden, SQL-like tools get a read-only validator, and confidential-looking outputs get a redaction policy. Before using the result in enforcement, run coverage and risk analysis and review the YAML in a pull request.
+
+```bash
+mcpzt policy coverage --config mcpzt.yaml
+mcpzt policy risks --config mcpzt.yaml
+mcpzt policy unused --config mcpzt.yaml
+```
+
 Before connecting a real MCP client, test policy decisions from the CLI. This is one of the fastest ways to understand whether a policy is matching what you think it is matching.
 
 ```bash
@@ -239,6 +262,30 @@ For command-based MCP servers, use the stdio wrapper. This mode keeps stdout res
 
 ```bash
 mcpzt wrap --config examples/filesystem-safe/mcpzt.yaml --server filesystem
+```
+
+If you already have MCP servers configured in Claude Desktop, Cursor or VS Code, you do not need to rewrite those entries by hand. Import the existing client config and let MCPZT generate two local files: an MCPZT policy config and a wrapped client config. With `--discover`, MCPZT starts the real upstream MCP servers, performs the MCP initialization handshake, lists their tools/resources/prompts, infers starter metadata and writes reviewable policies.
+
+```bash
+mcpzt client import \
+  --source "$HOME/Library/Application Support/Claude/claude_desktop_config.json" \
+  --mcpzt-config .mcpzt/client-import/claude/mcpzt.yaml \
+  --client-output .mcpzt/client-import/claude/claude_desktop_config.mcpzt.json \
+  --discover
+```
+
+For a stdio MCP server, the generated client entry keeps the original server name but changes the command so the client launches `mcpzt wrap --config ... --server ...`. MCPZT then launches the original upstream command behind the policy layer. For an HTTP MCP server, the generated client entry points at the MCPZT gateway route for that logical server.
+
+Environment variables from the original client config are preserved for stdio servers without being copied into the MCPZT YAML as literal secrets. The generated MCPZT config stores `env:VARIABLE_NAME` references, while the generated client config keeps passing the original environment variables to the MCPZT wrapper process. Keep generated client configs local and out of source control when they contain credentials.
+
+After reviewing the generated files, back up the original client config, replace it with the generated wrapped config, and restart the client. Run the approval UI beside Claude when you want to review high-risk tool calls interactively.
+
+```bash
+cp "$HOME/Library/Application Support/Claude/claude_desktop_config.json" \
+  "$HOME/Library/Application Support/Claude/claude_desktop_config.json.backup"
+cp .mcpzt/client-import/claude/claude_desktop_config.mcpzt.json \
+  "$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+mcpzt approve serve --config .mcpzt/client-import/claude/mcpzt.yaml
 ```
 
 ## How A Request Is Evaluated
@@ -622,6 +669,23 @@ approvals:
 
 With `webhook_strict: false`, MCPZT keeps enforcing policy even if the notification endpoint is temporarily unavailable. With strict mode, webhook delivery failure is treated as an operational failure.
 
+For local projects and very small deployments, the default JSON approval store is simple and transparent. For team environments, use the SQLite backend. It keeps the same approval model and CLI, but stores approvals in a database file with indexed reads and writes. This is a better default for long-lived gateways, approval dashboards and operational review.
+
+```yaml
+approvals:
+  backend: sqlite
+  path: /var/lib/mcpzt/approvals.sqlite3
+  default_ttl_seconds: 900
+```
+
+The approval UI is optional. It is self-hosted and reads the same approval store as the gateway. Run it on localhost for local review, or put it behind your existing internal authentication layer for team use.
+
+```bash
+mcpzt approve serve --config mcpzt.yaml --host 127.0.0.1 --port 8770
+```
+
+The UI is deliberately small: it lists pending approvals, shows server, capability, policy and subject, and lets an operator approve or deny. For deeper workflow integration, use `mcpzt approve list --format json`, the approval API exposed by the UI, or approval webhooks.
+
 ## Trying HTTP Manually
 
 You can exercise the HTTP proxy with `curl`. Start MCPZT first.
@@ -794,6 +858,14 @@ mcpzt audit tail --config mcpzt.yaml
 
 Secret-like keys and bearer-style strings are redacted recursively before write. Redaction applies to audit records and to sanitized upstream errors. In production, keep audit logs on protected storage and keep `audit.strict: true` so audit write failures fail closed.
 
+Use audit search when you need to investigate a specific operational question. It reads the configured JSONL audit file and filters by event type, server, decision, policy ID, correlation ID, approval ID and time window. Table output is useful during live review; JSON output is better for scripts and incident notebooks.
+
+```bash
+mcpzt audit search --config mcpzt.yaml --server github --decision deny
+mcpzt audit search --config mcpzt.yaml --policy-id critical-actions-need-approval
+mcpzt audit search --config mcpzt.yaml --approval-id appr_xxx --format json
+```
+
 By default, audit events include a hash chain. Each event stores the previous event hash and its own hash over canonical JSON. This does not replace secure log storage, but it makes accidental or malicious alteration visible during review.
 
 ```bash
@@ -831,6 +903,20 @@ mcpzt scan --config mcpzt.yaml --snapshot .mcpzt-capabilities/github.json
 ```
 
 The scanner is intentionally deterministic. It is not a model-based security review and it should not be treated as a full threat model. Its job is to catch obvious MCP capability risks early and consistently.
+
+Policy analysis answers a slightly different question. Discovery and scan ask what the upstream exposes and whether those capabilities look risky. Coverage asks how your current policy resolves each known capability. Risks flags direct allows for high-risk capabilities, side-effecting tools without input constraints, missing mappings and default-decision fallthrough. Unused policy analysis points out policies that do not structurally match any mapped or discovered capability, which often catches stale names after an upstream change.
+
+```bash
+mcpzt policy coverage --config mcpzt.yaml --snapshot .mcpzt-capabilities/github.json
+mcpzt policy risks --config mcpzt.yaml --snapshot .mcpzt-capabilities/github.json
+mcpzt policy unused --config mcpzt.yaml --snapshot .mcpzt-capabilities/github.json
+```
+
+Use JSON output in CI when you want to archive the analysis or gate a release.
+
+```bash
+mcpzt policy risks --config mcpzt.yaml --format json
+```
 
 ## Deployment Patterns
 
@@ -883,7 +969,7 @@ servers:
 
 In a sidecar deployment, the real MCP server binds to localhost inside the same host, container group or pod. MCPZT is the only process exposed to clients. This is often the simplest production shape when each team owns one MCP service and wants to keep the upstream server unchanged.
 
-The repository includes public deployment recipes under `deploy/`. The Docker Compose production example runs the container with a read-only filesystem, dropped Linux capabilities and explicit environment-backed secrets. The Helm chart is a starting point for Kubernetes sidecar or gateway deployments. It defaults to one replica because the current approval store is file-backed; scale-out deployments should use shared storage with correct locking semantics or a future database-backed approval backend.
+The repository includes public deployment recipes under `deploy/`. The Docker Compose production example runs the container with a read-only filesystem, dropped Linux capabilities and explicit environment-backed secrets. The Helm chart is a starting point for Kubernetes sidecar or gateway deployments. It defaults to one replica because approval state is local by default, even when using SQLite. Scale-out deployments should use storage with correct locking semantics and deliberate operational ownership before increasing replicas.
 
 ```bash
 docker run --rm ghcr.io/686f6c61/mcp-zero-trust-layer:<version> version
@@ -907,7 +993,7 @@ The production guide has the full checklist: [docs/PRODUCTION.md](docs/PRODUCTIO
 
 ## Examples In This Repository
 
-The examples are meant to be read as starting points, not as perfect production configs. [examples/github-readonly](examples/github-readonly/mcpzt.yaml) allows read-only GitHub operations and requires approval for critical actions. [examples/postgres-readonly](examples/postgres-readonly/mcpzt.yaml) allows SQL reads while blocking destructive statements. [examples/filesystem-safe](examples/filesystem-safe/mcpzt.yaml) restricts filesystem access and requires approval for writes. [examples/protected-http-upstream](examples/protected-http-upstream/mcpzt.yaml) shows how client auth and upstream credentials stay separate. [examples/multi-mcp](examples/multi-mcp/mcpzt.yaml) protects GitHub, Postgres, filesystem and CRM MCPs in one config.
+The examples are meant to be read as starting points, not as perfect production configs. [examples/github-readonly](examples/github-readonly/mcpzt.yaml) allows read-only GitHub operations and requires approval for critical actions. [examples/postgres-readonly](examples/postgres-readonly/mcpzt.yaml) allows SQL reads while blocking destructive statements. [examples/filesystem-safe](examples/filesystem-safe/mcpzt.yaml) restricts filesystem access and requires approval for writes. [examples/protected-http-upstream](examples/protected-http-upstream/mcpzt.yaml) shows how client auth and upstream credentials stay separate. [examples/oidc-gateway](examples/oidc-gateway/mcpzt.yaml) shows a production-shaped OIDC gateway with group-based policies, SQLite approvals and output redaction. [examples/multi-mcp](examples/multi-mcp/mcpzt.yaml) protects GitHub, Postgres, filesystem and CRM MCPs in one config.
 
 ## Documentation Map
 
@@ -959,7 +1045,7 @@ If the upstream receives a request but the client gets redacted data, look for o
 
 ## Limitations In 0.x
 
-HTTP GET SSE streams are not implemented. Request-scoped upstream SSE passthrough is intentionally outside this first release. The local JSON approval store is suitable for local and simple self-hosted use; larger teams may eventually want a database-backed approval backend. The URL validator is a strong guardrail but not a replacement for network egress controls. MCPZT reduces MCP tool risk, but it does not claim complete protection against prompt injection or all forms of agent misuse.
+HTTP GET SSE streams are not implemented. Request-scoped upstream SSE passthrough is intentionally outside this first release. The file and SQLite approval stores are suitable for local, sidecar and simple self-hosted use; horizontally scaled gateways need deliberate shared-state design. The URL validator is a strong guardrail but not a replacement for network egress controls. MCPZT reduces MCP tool risk, but it does not claim complete protection against prompt injection or all forms of agent misuse.
 
 ## License
 

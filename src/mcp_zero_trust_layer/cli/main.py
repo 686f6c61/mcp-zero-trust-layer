@@ -3,24 +3,32 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlparse
 
 import typer
+import yaml
 from rich.console import Console
 from rich.table import Table
 
 from mcp_zero_trust_layer import __version__
-from mcp_zero_trust_layer.approvals import ApprovalNotifier, ApprovalStore
-from mcp_zero_trust_layer.audit import AuditLogger, verify_audit_hash_chain
+from mcp_zero_trust_layer.approvals import ApprovalNotifier, ApprovalStore, create_approvals_app
+from mcp_zero_trust_layer.audit import AuditLogger, search_audit_events, verify_audit_hash_chain
 from mcp_zero_trust_layer.capabilities.discovery import (
+    CapabilitySnapshot,
     default_snapshot_path,
     diff_snapshots,
     discover_capabilities,
     read_snapshot,
     write_snapshot,
 )
+from mcp_zero_trust_layer.capabilities.onboarding import (
+    build_onboard_config,
+    parse_server_specs,
+)
+from mcp_zero_trust_layer.client_import import import_client_config
 from mcp_zero_trust_layer.config import load_config
 from mcp_zero_trust_layer.config.models import MCPZTConfig, PolicyConfig, ServerConfig
 from mcp_zero_trust_layer.config.secrets import (
@@ -32,7 +40,12 @@ from mcp_zero_trust_layer.core import RequestContext
 from mcp_zero_trust_layer.errors import ConfigError
 from mcp_zero_trust_layer.identity import Identity
 from mcp_zero_trust_layer.packs import add_pack, list_packs, read_pack
-from mcp_zero_trust_layer.policy import PolicyEngine
+from mcp_zero_trust_layer.policy import (
+    PolicyEngine,
+    build_policy_coverage,
+    find_policy_risks,
+    find_unused_policies,
+)
 from mcp_zero_trust_layer.security import scan_snapshot
 from mcp_zero_trust_layer.transports.http.server import run_http_server
 from mcp_zero_trust_layer.transports.stdio import run_stdio_wrapper
@@ -55,7 +68,10 @@ app.add_typer(pack_app, name="pack")
 app.add_typer(client_app, name="client")
 
 console = Console()
-DEFAULT_CONFIG_PATH = Path("mcpzt.yaml")
+CONFIG_FILENAME = "mcpzt.yaml"
+DEFAULT_CONFIG_PATH = Path(CONFIG_FILENAME)
+DEFAULT_CLIENT_IMPORT_DIR = Path(".mcpzt/client-import")
+TABLE_JSON_FORMAT_ERROR = "[red]--format must be table or json[/red]"
 
 
 DEFAULT_CONFIG = """project:
@@ -112,6 +128,7 @@ audit:
   path: ./mcpzt-audit.jsonl
 
 approvals:
+  backend: file
   path: ./mcpzt-approvals.json
   default_ttl_seconds: 900
 """
@@ -273,6 +290,7 @@ audit:
   hash_chain: true
 
 approvals:
+  backend: file
   path: ./mcpzt-demo-approvals.json
 """
 
@@ -397,7 +415,7 @@ def demo(
     """Create a runnable local demo with a fake MCP upstream."""
     files = {
         "fake_mcp.py": DEMO_FAKE_MCP,
-        "mcpzt.yaml": DEMO_CONFIG,
+        CONFIG_FILENAME: DEMO_CONFIG,
         "demo_client.py": DEMO_CLIENT,
         "run_demo.sh": DEMO_RUNNER,
         "README.md": DEMO_README,
@@ -412,6 +430,59 @@ def demo(
             path.chmod(0o755)
     console.print(f"[green]Created demo[/green] {output}")
     console.print(f"Run it with: [bold]{output / 'run_demo.sh'}[/bold]")
+
+
+@app.command()
+def onboard(
+    server: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--server",
+            help="HTTP MCP upstream as name=url. Repeat for multiple upstreams.",
+        ),
+    ] = None,
+    path: Annotated[
+        Path | None,
+        typer.Option("--config", "-c", help="Existing config to use as onboarding input."),
+    ] = None,
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Generated config path."),
+    ] = DEFAULT_CONFIG_PATH,
+    force: Annotated[bool, typer.Option(help="Overwrite output config if it exists.")] = False,
+    dry_run: Annotated[bool, typer.Option(help="Print generated config without writing files.")] = False,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="Report output format: table or json."),
+    ] = "table",
+    write_snapshots: Annotated[
+        bool,
+        typer.Option(help="Write discovery snapshots under --snapshot-dir."),
+    ] = True,
+    snapshot_dir: Annotated[
+        Path,
+        typer.Option(help="Directory for discovery snapshots."),
+    ] = Path(".mcpzt-capabilities"),
+) -> None:
+    """Discover MCP servers and generate a conservative starter config."""
+    try:
+        base_config = _onboard_base_config(server or [], path)
+        snapshots = _discover_configured_servers(base_config)
+        result = build_onboard_config(base_config, snapshots)
+    except (ConfigError, ValueError) as exc:
+        console.print(f"[red]Cannot onboard:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    _emit_onboard_config(
+        result.config_yaml,
+        snapshots=snapshots,
+        output=output,
+        force=force,
+        dry_run=dry_run,
+        write_snapshots=write_snapshots,
+        snapshot_dir=snapshot_dir,
+    )
+    _emit_onboard_report(result.report.model_dump(mode="json"), result.report.model_dump_json(), output_format)
 
 
 @config_app.command("validate")
@@ -466,7 +537,7 @@ def config_lint(
     elif output_format == "table":
         _print_lint_table(findings)
     else:
-        console.print("[red]--format must be table or json[/red]")
+        console.print(TABLE_JSON_FORMAT_ERROR)
         raise typer.Exit(1)
 
     has_errors = any(finding["severity"] == "error" for finding in findings)
@@ -544,6 +615,101 @@ def policy_explain(
         console.print(f"[red]Cannot explain policy:[/red] {exc}")
         raise typer.Exit(1) from exc
     console.print_json(json.dumps(PolicyEngine(config).explain(context)))
+
+
+@policy_app.command("coverage")
+def policy_coverage(
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
+    snapshot: Annotated[
+        Path | None,
+        typer.Option(help="Optional discovered capability snapshot to evaluate."),
+    ] = None,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: table or json."),
+    ] = "table",
+) -> None:
+    """Show how mapped or discovered capabilities resolve through policy."""
+    try:
+        config = load_config(path)
+        report = build_policy_coverage(
+            config,
+            snapshot=read_snapshot(snapshot) if snapshot else None,
+        )
+    except (ConfigError, ValueError) as exc:
+        console.print(f"[red]Cannot build policy coverage:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    if output_format == "json":
+        console.print_json(report.model_dump_json())
+        return
+    if output_format != "table":
+        console.print(TABLE_JSON_FORMAT_ERROR)
+        raise typer.Exit(1)
+    _print_policy_coverage_table(report.model_dump(mode="json")["items"])
+
+
+@policy_app.command("risks")
+def policy_risks(
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
+    snapshot: Annotated[
+        Path | None,
+        typer.Option(help="Optional discovered capability snapshot to evaluate."),
+    ] = None,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: table or json."),
+    ] = "table",
+) -> None:
+    """Report policy coverage risks for mapped or discovered capabilities."""
+    try:
+        config = load_config(path)
+        report = find_policy_risks(
+            config,
+            snapshot=read_snapshot(snapshot) if snapshot else None,
+        )
+    except (ConfigError, ValueError) as exc:
+        console.print(f"[red]Cannot analyze policy risks:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    if output_format == "json":
+        console.print_json(report.model_dump_json())
+        return
+    if output_format != "table":
+        console.print(TABLE_JSON_FORMAT_ERROR)
+        raise typer.Exit(1)
+    _print_policy_risks_table(report.model_dump(mode="json")["findings"])
+    if report.failed:
+        raise typer.Exit(2)
+
+
+@policy_app.command("unused")
+def policy_unused(
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
+    snapshot: Annotated[
+        Path | None,
+        typer.Option(help="Optional discovered capability snapshot to evaluate."),
+    ] = None,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: table or json."),
+    ] = "table",
+) -> None:
+    """Find policies that do not structurally match known capabilities."""
+    try:
+        config = load_config(path)
+        report = find_unused_policies(
+            config,
+            snapshot=read_snapshot(snapshot) if snapshot else None,
+        )
+    except (ConfigError, ValueError) as exc:
+        console.print(f"[red]Cannot analyze unused policies:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    if output_format == "json":
+        console.print_json(report.model_dump_json())
+        return
+    if output_format != "table":
+        console.print(TABLE_JSON_FORMAT_ERROR)
+        raise typer.Exit(1)
+    _print_unused_policies_table(report.model_dump(mode="json")["policies"])
 
 
 @app.command()
@@ -700,6 +866,63 @@ def audit_verify(
     raise typer.Exit(1)
 
 
+@audit_app.command("search")
+def audit_search(
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: table or json."),
+    ] = "table",
+    event_type: Annotated[str | None, typer.Option(help="Filter by event_type.")] = None,
+    server: Annotated[str | None, typer.Option(help="Filter by logical server.")] = None,
+    decision: Annotated[str | None, typer.Option(help="Filter by policy decision.")] = None,
+    policy_id: Annotated[str | None, typer.Option(help="Filter by selected policy id.")] = None,
+    correlation_id: Annotated[
+        str | None,
+        typer.Option(help="Filter by audit correlation id."),
+    ] = None,
+    approval_id: Annotated[str | None, typer.Option(help="Filter by approval id.")] = None,
+    since: Annotated[
+        str | None,
+        typer.Option(help="Only include events at or after this ISO timestamp."),
+    ] = None,
+    until: Annotated[
+        str | None,
+        typer.Option(help="Only include events at or before this ISO timestamp."),
+    ] = None,
+    limit: Annotated[int, typer.Option(help="Maximum matching events to return.")] = 100,
+) -> None:
+    """Search audit events by operational fields."""
+    config = load_config(path)
+    if config.audit.destination != "file":
+        console.print("[red]audit search requires audit.destination: file[/red]")
+        raise typer.Exit(1)
+    try:
+        events = search_audit_events(
+            config.audit.path,
+            event_type=event_type,
+            server=server,
+            decision=decision,
+            policy_id=policy_id,
+            correlation_id=correlation_id,
+            approval_id=approval_id,
+            since=_parse_cli_timestamp(since),
+            until=_parse_cli_timestamp(until),
+            limit=limit,
+        )
+    except ValueError as exc:
+        console.print(f"[red]Cannot search audit:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    if output_format == "json":
+        console.print_json(json.dumps(events))
+        return
+    if output_format != "table":
+        console.print(TABLE_JSON_FORMAT_ERROR)
+        raise typer.Exit(1)
+    _print_audit_search_table(events)
+
+
 @approve_app.command("list")
 def approve_list(
     path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
@@ -716,7 +939,7 @@ def approve_list(
         console.print_json(json.dumps(payload))
         return
     if output_format != "table":
-        console.print("[red]--format must be table or json[/red]")
+        console.print(TABLE_JSON_FORMAT_ERROR)
         raise typer.Exit(1)
     table = Table(expand=False)
     table.add_column("ID", no_wrap=True, overflow="ignore")
@@ -787,6 +1010,20 @@ def approve_deny(
     _set_approval_status(path, approval_id, "denied", decided_by=decided_by, comment=comment)
 
 
+@approve_app.command("serve")
+def approve_serve(
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
+    host: Annotated[str, typer.Option(help="Host for the approval UI.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Port for the approval UI.")] = 8770,
+) -> None:
+    """Run the self-hosted approval review UI."""
+    import uvicorn
+
+    config = load_config(path)
+    console.print(f"[green]Starting approval UI[/green] on http://{host}:{port}")
+    uvicorn.run(create_approvals_app(config), host=host, port=port)
+
+
 @pack_app.command("list")
 def pack_list() -> None:
     """List bundled policy packs."""
@@ -848,6 +1085,102 @@ def client_config(
         console.print(f"[green]Wrote[/green] {output}")
         return
     console.print(rendered)
+
+
+@client_app.command("import")
+def client_import(
+    source: Annotated[
+        Path | None,
+        typer.Option(
+            "--source",
+            help="Existing MCP client JSON config. Defaults to Claude Desktop on macOS.",
+        ),
+    ] = None,
+    mcpzt_config: Annotated[
+        Path,
+        typer.Option("--mcpzt-config", help="Output MCPZT YAML config."),
+    ] = DEFAULT_CLIENT_IMPORT_DIR / CONFIG_FILENAME,
+    client_output: Annotated[
+        Path,
+        typer.Option("--client-output", help="Output wrapped client JSON config."),
+    ] = DEFAULT_CLIENT_IMPORT_DIR / "claude_desktop_config.mcpzt.json",
+    base_url: Annotated[
+        str,
+        typer.Option("--base-url", help="MCPZT HTTP gateway base URL for imported HTTP servers."),
+    ] = "http://127.0.0.1:8765",
+    wrapper_command: Annotated[
+        str,
+        typer.Option(
+            "--wrapper-command",
+            help="Command the client should run for imported stdio servers.",
+        ),
+    ] = "mcpzt",
+    project_name: Annotated[
+        str,
+        typer.Option("--project-name", help="Project name for the generated MCPZT config."),
+    ] = "mcpzt-imported-client",
+    discover: Annotated[
+        bool,
+        typer.Option(help="Discover real upstream capabilities and generate starter policies."),
+    ] = False,
+    snapshot_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--snapshot-dir",
+            help="Directory for discovered capability snapshots when --discover is used.",
+        ),
+    ] = None,
+    force: Annotated[bool, typer.Option(help="Overwrite generated files.")] = False,
+) -> None:
+    """Import an existing Claude/Cursor/VS Code MCP config and wrap it with MCPZT."""
+    source_path = (source or _default_claude_desktop_config()).expanduser()
+    mcpzt_config = mcpzt_config.expanduser()
+    client_output = client_output.expanduser()
+    for output in [mcpzt_config, client_output]:
+        if output.exists() and not force:
+            raise typer.BadParameter(f"{output} already exists; pass --force to overwrite")
+    try:
+        imported = import_client_config(
+            source_path,
+            project_name=project_name,
+            audit_path=str((mcpzt_config.parent / "audit.jsonl").resolve()),
+            approvals_path=str((mcpzt_config.parent / "approvals.sqlite3").resolve()),
+            base_url=base_url,
+            wrapper_command=wrapper_command,
+            mcpzt_config_path=mcpzt_config.resolve(),
+        )
+        config_yaml = imported.mcpzt_config_yaml
+        report: object | None = None
+        if discover:
+            base_config = MCPZTConfig.model_validate(yaml.safe_load(config_yaml))
+            snapshots = _discover_configured_servers(base_config)
+            result = build_onboard_config(base_config, snapshots)
+            config_yaml = result.config_yaml
+            report = result.report
+            target_snapshot_dir = (snapshot_dir or (mcpzt_config.parent / "capabilities")).expanduser()
+            _write_onboard_snapshots(
+                snapshots,
+                write_snapshots=True,
+                snapshot_dir=target_snapshot_dir,
+            )
+    except (ConfigError, OSError, ValueError) as exc:
+        console.print(f"[red]Cannot import client config:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    mcpzt_config.parent.mkdir(parents=True, exist_ok=True)
+    client_output.parent.mkdir(parents=True, exist_ok=True)
+    mcpzt_config.write_text(config_yaml, encoding="utf-8")
+    client_output.write_text(imported.client_config_json + "\n", encoding="utf-8")
+    console.print(f"[green]Wrote MCPZT config[/green] {mcpzt_config}")
+    console.print(f"[green]Wrote wrapped client config[/green] {client_output}")
+    if discover:
+        console.print(
+            f"[green]Wrote discovery snapshots[/green] "
+            f"{snapshot_dir or (mcpzt_config.parent / 'capabilities')}"
+        )
+    _print_imported_servers(imported.servers)
+    if report is not None:
+        _print_onboard_report(report.model_dump(mode="json"))  # type: ignore[attr-defined]
 
 
 @app.command()
@@ -1087,6 +1420,14 @@ def _lint_capability_mappings(config: MCPZTConfig, findings: list[dict[str, str]
 
 
 def _lint_state(config: MCPZTConfig, findings: list[dict[str, str]]) -> None:
+    if config.approvals.backend == "sqlite" and Path(config.approvals.path).suffix == ".json":
+        _lint_add(
+            findings,
+            "warning",
+            "approvals.path",
+            "sqlite approval backend uses a JSON-looking path",
+            "Use a .sqlite3 or .db path to make the approval backend obvious.",
+        )
     if config.approvals.default_ttl_seconds <= 0:
         _lint_add(
             findings,
@@ -1176,6 +1517,100 @@ def _print_lint_table(findings: list[dict[str, str]]) -> None:
     console.print(table)
 
 
+def _print_audit_search_table(events: list[dict[str, object]]) -> None:
+    if not events:
+        console.print("[yellow]No matching audit events[/yellow]")
+        return
+    table = Table(expand=False)
+    table.add_column("Timestamp", overflow="fold")
+    table.add_column("Type", no_wrap=True)
+    table.add_column("Server", no_wrap=True)
+    table.add_column("Decision", no_wrap=True)
+    table.add_column("Policy", overflow="fold")
+    table.add_column("Correlation", overflow="fold")
+    table.add_column("Approval", overflow="fold")
+    for event in events:
+        approval = event.get("approval")
+        approval_id = approval.get("id") if isinstance(approval, dict) else ""
+        table.add_row(
+            str(event.get("timestamp") or ""),
+            str(event.get("event_type") or ""),
+            str(event.get("server") or ""),
+            str(event.get("decision") or ""),
+            str(event.get("policy_id") or ""),
+            str(event.get("correlation_id") or ""),
+            str(approval_id or ""),
+        )
+    Console(width=180).print(table)
+
+
+def _print_policy_coverage_table(items: list[dict[str, object]]) -> None:
+    if not items:
+        console.print("[yellow]No mapped or discovered capabilities to analyze[/yellow]")
+        return
+    table = Table(expand=False)
+    table.add_column("Server", no_wrap=True)
+    table.add_column("Type", no_wrap=True)
+    table.add_column("Capability", overflow="fold")
+    table.add_column("Mapped", no_wrap=True)
+    table.add_column("Decision", no_wrap=True)
+    table.add_column("Policy", overflow="fold")
+    table.add_column("Risk", no_wrap=True)
+    table.add_column("Access", no_wrap=True)
+    for item in items:
+        table.add_row(
+            str(item["server"]),
+            str(item["capability_type"]),
+            str(item["capability"]),
+            "yes" if item["mapped"] else "no",
+            str(item["decision"]),
+            str(item.get("policy_id") or ""),
+            str(item.get("risk") or ""),
+            str(item.get("access") or ""),
+        )
+    Console(width=180).print(table)
+
+
+def _print_policy_risks_table(findings: list[dict[str, object]]) -> None:
+    if not findings:
+        console.print("[green]No policy risk findings[/green]")
+        return
+    table = Table("Severity", "Rule", "Server", "Capability", "Policy", "Message")
+    for finding in findings:
+        style = {"critical": "red", "high": "red", "medium": "yellow", "low": "blue"}.get(
+            str(finding["severity"]), "white"
+        )
+        table.add_row(
+            f"[{style}]{finding['severity']}[/{style}]",
+            str(finding["rule_id"]),
+            str(finding["server"]),
+            str(finding.get("capability") or ""),
+            str(finding.get("policy_id") or ""),
+            str(finding["message"]),
+        )
+    Console(width=180).print(table)
+
+
+def _print_unused_policies_table(policies: list[dict[str, object]]) -> None:
+    if not policies:
+        console.print("[green]No unused policies detected[/green]")
+        return
+    table = Table("Policy", "Effect", "Message")
+    for policy in policies:
+        table.add_row(
+            str(policy["policy_id"]),
+            str(policy["effect"]),
+            str(policy["message"]),
+        )
+    console.print(table)
+
+
+def _parse_cli_timestamp(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 def _policy_context(
     *,
     config_path: Path,
@@ -1242,6 +1677,24 @@ def _render_client_config(
     raise ValueError("kind must be claude-desktop, cursor, vscode, claude-code, or json")
 
 
+def _default_claude_desktop_config() -> Path:
+    return Path.home() / "Library/Application Support/Claude/claude_desktop_config.json"
+
+
+def _print_imported_servers(servers: object) -> None:
+    if not isinstance(servers, tuple):
+        return
+    table = Table("Client name", "MCPZT server", "Transport", "Env keys")
+    for server in servers:
+        table.add_row(
+            server.source_name,
+            server.logical_name,
+            server.transport,
+            ", ".join(server.env_keys) if server.env_keys else "",
+        )
+    console.print(table)
+
+
 def _set_approval_status(
     path: Path,
     approval_id: str,
@@ -1265,6 +1718,118 @@ def _set_approval_status(
     AuditLogger(config.audit).log_approval(status, approval.model_dump(mode="json"))
     ApprovalNotifier(config.approvals).notify(status, approval.model_dump(mode="json"))
     console.print(f"[green]{approval.id}[/green] -> {approval.status}")
+
+
+def _emit_onboard_config(
+    config_yaml: str,
+    *,
+    snapshots: list[CapabilitySnapshot],
+    output: Path,
+    force: bool,
+    dry_run: bool,
+    write_snapshots: bool,
+    snapshot_dir: Path,
+) -> None:
+    if dry_run:
+        console.print(config_yaml.rstrip())
+        return
+    if output.exists() and not force:
+        raise typer.BadParameter(f"{output} already exists; pass --force to overwrite")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(config_yaml, encoding="utf-8")
+    _write_onboard_snapshots(snapshots, write_snapshots=write_snapshots, snapshot_dir=snapshot_dir)
+    console.print(f"[green]Wrote onboarded config[/green] {output}")
+    if write_snapshots:
+        console.print(f"[green]Wrote discovery snapshots[/green] {snapshot_dir}")
+
+
+def _write_onboard_snapshots(
+    snapshots: list[CapabilitySnapshot],
+    *,
+    write_snapshots: bool,
+    snapshot_dir: Path,
+) -> None:
+    if not write_snapshots:
+        return
+    for snapshot in snapshots:
+        write_snapshot(snapshot, snapshot_dir / f"{snapshot.server}.json")
+
+
+def _emit_onboard_report(report: dict[str, object], report_json: str, output_format: str) -> None:
+    if output_format == "json":
+        console.print_json(report_json)
+        return
+    if output_format != "table":
+        console.print(TABLE_JSON_FORMAT_ERROR)
+        raise typer.Exit(1)
+    _print_onboard_report(report)
+
+
+def _onboard_base_config(server_specs: list[str], path: Path | None) -> MCPZTConfig:
+    if server_specs:
+        servers = parse_server_specs(server_specs)
+        return MCPZTConfig.model_validate(
+            {
+                "project": {"name": "mcpzt-onboarded", "environment": "development"},
+                "runtime": {"mode": "gateway", "default_decision": "deny"},
+                "auth": {"mode": "none"},
+                "servers": [server.model_dump(mode="json") for server in servers],
+                "policies": [],
+                "audit": {"destination": "file", "path": "./mcpzt-audit.jsonl"},
+                "approvals": {"path": "./mcpzt-approvals.sqlite3", "backend": "sqlite"},
+            }
+        )
+    if path is None:
+        raise ValueError("pass --server name=url or --config with configured servers")
+    return load_config(path)
+
+
+def _discover_configured_servers(config: MCPZTConfig) -> list[CapabilitySnapshot]:
+    snapshots: list[CapabilitySnapshot] = []
+    for selected in config.servers:
+        upstream = _upstream_for(selected)
+        try:
+            snapshots.append(discover_capabilities(config, selected.name, upstream))
+        finally:
+            if hasattr(upstream, "close"):
+                upstream.close()  # type: ignore[attr-defined]
+    return snapshots
+
+
+def _print_onboard_report(report: dict[str, object]) -> None:
+    _print_onboard_servers(report.get("servers"))
+    _print_onboard_list(report.get("generated_policies"), "Generated policies")
+    _print_onboard_list(report.get("recommendations"), "Recommendations")
+
+
+def _print_onboard_servers(servers: object) -> None:
+    if not isinstance(servers, list):
+        return
+    table = Table("Server", "Tools", "Resources", "Prompts", "Errors")
+    for server in servers:
+        if isinstance(server, dict):
+            table.add_row(
+                str(server.get("server") or ""),
+                str(server.get("tools") or 0),
+                str(server.get("resources") or 0),
+                str(server.get("prompts") or 0),
+                _onboard_error_summary(server.get("errors")),
+            )
+    console.print(table)
+
+
+def _print_onboard_list(items: object, title: str) -> None:
+    if not isinstance(items, list) or not items:
+        return
+    console.print(f"[bold]{title}[/bold]")
+    for item in items:
+        console.print(f"- {item}")
+
+
+def _onboard_error_summary(errors: object) -> str:
+    if not isinstance(errors, dict):
+        return ""
+    return ", ".join(sorted(str(key) for key in errors))
 
 
 def _default_approver() -> str:

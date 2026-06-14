@@ -60,6 +60,7 @@ class ServerConfig(BaseModel):
     upstream: str | None = None
     upstream_headers: dict[str, str] = Field(default_factory=dict)
     command: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
     timeout: float = 30.0
     max_response_bytes: int = 10_485_760
 
@@ -162,6 +163,7 @@ class AuditConfig(BaseModel):
 
 
 class ApprovalsConfig(BaseModel):
+    backend: Literal["file", "sqlite"] = "file"
     path: str = "./mcpzt-approvals.json"
     default_ttl_seconds: int = 900
     webhook_url: str | None = None

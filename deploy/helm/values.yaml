@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/686f6c61/mcp-zero-trust-layer
-  tag: "0.1.3"
+  tag: "0.2.0"
   pullPolicy: IfNotPresent
 
 service:
@@ -56,7 +56,8 @@ configYaml: |
     hash_chain: true
 
   approvals:
-    path: /var/lib/mcpzt/approvals.json
+    backend: sqlite
+    path: /var/lib/mcpzt/approvals.sqlite3
     default_ttl_seconds: 900
 
   metrics:

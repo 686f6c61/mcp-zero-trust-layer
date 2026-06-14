@@ -4,6 +4,35 @@ All notable changes to MCP Zero Trust Layer will be documented here.
 
 The project follows SemVer during the `0.x` line with the caveat that minor versions may still change configuration shape before `1.0`.
 
+## 0.2.0 - 2026-06-14
+
+### Added
+
+- Added `mcpzt onboard` to discover one or more MCP upstreams and generate a conservative starter config with capability mappings, reviewable policies, snapshots and an onboarding report.
+- Added SQLite approval storage through `approvals.backend: sqlite` while preserving the existing approval CLI and approval retry contract.
+- Added `mcpzt approve serve`, a self-hosted approval review UI with human-readable approval review and JSON approval endpoints.
+- Added `mcpzt audit search` for filtering JSONL audit logs by event type, server, decision, policy ID, correlation ID, approval ID and time window.
+- Added `mcpzt policy coverage`, `mcpzt policy risks` and `mcpzt policy unused` for policy coverage review, risk detection and stale-policy analysis.
+- Added a production-shaped OIDC gateway example with group-based policies, upstream credentials, SQLite approvals and output redaction.
+- Added `mcpzt client import` to wrap existing Claude Desktop, Cursor and VS Code MCP client configs with MCPZT-generated policy and client files.
+- Added real MCP discovery handshakes during capability discovery so upstreams that require `initialize` can be onboarded correctly.
+
+### Changed
+
+- Updated generated starter configs to make the approval backend explicit.
+- Updated onboarding inference to use MCP tool annotations such as `readOnlyHint` and `destructiveHint` when classifying capabilities.
+- Updated stdio upstream execution to pass configured environment variables through explicit secret references.
+- Updated HTTP upstream handling to retain MCP session IDs across requests to the same logical server.
+- Updated production guidance to use SQLite approvals for long-running single-instance gateways and to document the approval UI security posture.
+- Expanded rollout guidance with onboarding, policy coverage analysis, audit search and approval UI workflows.
+- Updated Docker Compose and Helm release defaults to the `0.2.0` image tag and aligned the Helm example with SQLite approvals.
+- Extended PyPI release preflight guidance with onboarding and policy-analysis smoke checks.
+
+### Tests
+
+- Added coverage for SQLite approvals, approval UI review, audit search, onboarding config generation and policy analysis commands.
+- Added CLI regression coverage for SQLite approval listing, audit search, policy coverage, onboarding from `--server name=url` and imported client configs.
+
 ## 0.1.3 - 2026-06-14
 
 ### Added

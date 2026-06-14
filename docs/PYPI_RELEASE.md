@@ -96,6 +96,10 @@ mcpzt config schema --output /tmp/mcpzt.schema.json
 mcpzt doctor --config /tmp/mcpzt.yaml
 mcpzt client config --config /tmp/mcpzt.yaml --base-url http://127.0.0.1:8765
 mcpzt demo --output /tmp/mcpzt-demo --force
+mcpzt onboard \
+  --server github=http://127.0.0.1:3001/mcp \
+  --output /tmp/mcpzt-onboard.yaml \
+  --dry-run
 mcpzt policy test \
   --config examples/github-readonly/mcpzt.yaml \
   --server github \
@@ -106,6 +110,9 @@ mcpzt policy explain \
   --server github \
   --method tools/call \
   --capability github.search_issues
+mcpzt policy coverage --config examples/multi-mcp/mcpzt.yaml --format json
+mcpzt policy risks --config examples/multi-mcp/mcpzt.yaml --format json || test "$?" = "2"
+mcpzt policy unused --config examples/multi-mcp/mcpzt.yaml --format json
 ```
 
 If those commands fail locally, do not publish. Fix the package before creating a release.
@@ -125,6 +132,7 @@ python -m venv /tmp/mcpzt-wheel-smoke
 /tmp/mcpzt-wheel-smoke/bin/mcpzt config lint --config /tmp/mcpzt-smoke.yaml
 /tmp/mcpzt-wheel-smoke/bin/mcpzt client config --config /tmp/mcpzt-smoke.yaml
 /tmp/mcpzt-wheel-smoke/bin/mcpzt demo --output /tmp/mcpzt-wheel-demo --force
+/tmp/mcpzt-wheel-smoke/bin/mcpzt policy coverage --config examples/multi-mcp/mcpzt.yaml --format json
 ```
 
 This catches missing package data, broken entry points and metadata issues that may not show up during editable development.

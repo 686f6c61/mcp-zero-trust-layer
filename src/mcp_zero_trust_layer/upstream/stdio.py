@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 # Stdio MCP upstreams require subprocess; command is an argv list and shell is disabled.
 import subprocess  # nosec B404
 import sys
 from typing import Any, TextIO
 
 from mcp_zero_trust_layer.config.models import ServerConfig
+from mcp_zero_trust_layer.config.secrets import SecretError, resolve_secret_value
 from mcp_zero_trust_layer.protocol import JSONRPCError
 
 
@@ -20,6 +22,7 @@ class StdioProcessUpstream:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=_stdio_env(server),
             text=True,
             bufsize=1,
             shell=False,
@@ -75,3 +78,15 @@ class StdioProcessUpstream:
         for line in self.process.stderr:
             target.write(line)
             target.flush()
+
+
+def _stdio_env(server: ServerConfig) -> dict[str, str] | None:
+    if not server.env:
+        return None
+    env = os.environ.copy()
+    for key, value in server.env.items():
+        try:
+            env[key] = resolve_secret_value(value, field=f"servers.{server.name}.env.{key}")
+        except SecretError as exc:
+            raise JSONRPCError(-32031, "Stdio secret is not configured", {"error": str(exc)}) from exc
+    return env

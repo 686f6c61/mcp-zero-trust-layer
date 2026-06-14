@@ -50,7 +50,8 @@ audit:
   hash_chain: true
 
 approvals:
-  path: /var/lib/mcpzt/approvals.json
+  backend: sqlite
+  path: /var/lib/mcpzt/approvals.sqlite3
   default_ttl_seconds: 900
 
 metrics:
@@ -84,7 +85,7 @@ mcpzt wrap --config /etc/mcpzt/mcpzt.yaml --server filesystem
 
 In stdio mode, never write audit logs to stdout. Stdout is reserved for MCP protocol messages. Use file audit or stderr.
 
-The repository also ships deployment recipes under `deploy/`. `deploy/docker-compose.prod.yaml` is useful for a single-node or small internal deployment where local persistent state is acceptable. `deploy/helm` is a Kubernetes starting point for a sidecar or gateway shape. The Helm values default to one replica because approvals and audit state are file-backed in this release. Horizontal scale should wait until the approval store and audit destination are backed by shared infrastructure with correct locking and retention semantics.
+The repository also ships deployment recipes under `deploy/`. `deploy/docker-compose.prod.yaml` is useful for a single-node or small internal deployment where local persistent state is acceptable. `deploy/helm` is a Kubernetes starting point for a sidecar or gateway shape. The Helm values default to one replica because approvals and audit state are local by default. SQLite is a better operational store than JSON for a long-running single instance, but it is not a distributed control plane. Horizontal scale should wait until approval state, audit retention and filesystem locking are deliberately designed for the platform.
 
 ## HTTP Security Posture
 
@@ -239,6 +240,21 @@ policy_engine:
 
 Start in a development environment with `dry_run: true` while you learn what the upstream exposes. Run discovery, map capabilities, add deny and allow rules, and use `mcpzt policy test` for representative requests.
 
+For a new project, use onboarding to create the first versionable policy file. It discovers one or more MCP upstreams, infers starter mappings, writes conservative policies and records discovery snapshots. Treat the generated YAML as a pull-request draft. Review names, risks, access labels, validators and output rules before relying on it.
+
+```bash
+mcpzt onboard \
+  --server github=http://127.0.0.1:3001/mcp \
+  --server crm=http://127.0.0.1:3002/mcp \
+  --output mcpzt.yaml
+```
+
+For an existing config, onboarding can use the configured servers as input and produce a new candidate file.
+
+```bash
+mcpzt onboard --config current-mcpzt.yaml --output proposed-mcpzt.yaml
+```
+
 ```bash
 mcpzt discover --server github --config mcpzt.yaml
 mcpzt policy test \
@@ -253,6 +269,9 @@ Before switching to enforcement, run:
 ```bash
 mcpzt config validate --config mcpzt.yaml
 mcpzt config lint --strict --config mcpzt.yaml
+mcpzt policy coverage --config mcpzt.yaml
+mcpzt policy risks --config mcpzt.yaml
+mcpzt policy unused --config mcpzt.yaml
 mcpzt doctor --production --strict --config mcpzt.yaml
 python -m pytest
 ```
@@ -271,6 +290,20 @@ Audit events are JSONL. Secret-like keys and bearer-style values are redacted re
 
 ```bash
 mcpzt audit tail --config /etc/mcpzt/mcpzt.yaml
+```
+
+Use `audit search` for incident review and operator questions. It filters the configured JSONL audit file by event type, server, decision, policy ID, correlation ID, approval ID and time window. That lets an operator answer focused questions without building a custom log query every time.
+
+```bash
+mcpzt audit search \
+  --config /etc/mcpzt/mcpzt.yaml \
+  --server github \
+  --decision deny
+
+mcpzt audit search \
+  --config /etc/mcpzt/mcpzt.yaml \
+  --correlation-id corr_xxx \
+  --format json
 ```
 
 With `audit.hash_chain: true`, each event carries `previous_event_hash` and `event_hash`. This gives operators a simple tamper-evidence check for local JSONL audit files. It does not replace append-only storage or centralized logging, but it makes reorder, edit and partial corruption easier to detect.
@@ -307,13 +340,34 @@ Approved retries are bound to the original identity, server, capability, policy 
 
 Use the table output for human operators and the JSON output for review dashboards, ticketing glue or internal approval UIs. Automation should not scrape terminal tables because column widths and styling are optimized for people.
 
-The local JSON approval store uses file locking and atomic replace. For larger multi-instance deployments, keep the approval path on storage with correct locking semantics or plan a database-backed approval backend before scaling horizontally.
+Use SQLite for long-running single-instance gateways or sidecars. It preserves the same approval model while giving operators a database file with indexed reads and writes. Keep the database on persistent storage, back it up according to your incident-retention needs, and restrict filesystem access to the MCPZT process and approved operators.
+
+```yaml
+approvals:
+  backend: sqlite
+  path: /var/lib/mcpzt/approvals.sqlite3
+  default_ttl_seconds: 900
+```
+
+The JSON approval store remains useful for local development and transparent tests. It uses file locking and atomic replace. For larger multi-instance deployments, local JSON and local SQLite both require careful storage semantics. Do not assume that multiple replicas sharing an arbitrary network filesystem will behave like a designed approval service.
+
+The self-hosted approval UI is optional. It is useful for teams that want a browser-based review surface without building an integration first.
+
+```bash
+mcpzt approve serve \
+  --config /etc/mcpzt/mcpzt.yaml \
+  --host 127.0.0.1 \
+  --port 8770
+```
+
+Run the UI on localhost for direct operator access or put it behind an existing internal auth gateway. The UI itself is intentionally small and should not be treated as an identity provider. The approval decisions it writes are still audited through the normal approval store and audit log path.
 
 Approval webhooks can notify a separate review experience or operations workflow. They receive redacted approval data for creation and decision events. Keep webhook endpoints internal, authenticate them at the network or gateway layer, and decide deliberately whether webhook failure should be best-effort or strict.
 
 ```yaml
 approvals:
-  path: /var/lib/mcpzt/approvals.json
+  backend: sqlite
+  path: /var/lib/mcpzt/approvals.sqlite3
   webhook_url: env:MCPZT_APPROVAL_WEBHOOK_URL
   webhook_strict: false
 ```
@@ -336,6 +390,24 @@ mcpzt diff --server github --config /etc/mcpzt/mcpzt.yaml
 mcpzt scan --config /etc/mcpzt/mcpzt.yaml --snapshot .mcpzt-capabilities/github.json
 ```
 
+Then analyze the policy impact of the same capabilities.
+
+```bash
+mcpzt policy coverage \
+  --config /etc/mcpzt/mcpzt.yaml \
+  --snapshot .mcpzt-capabilities/github.json
+
+mcpzt policy risks \
+  --config /etc/mcpzt/mcpzt.yaml \
+  --snapshot .mcpzt-capabilities/github.json
+
+mcpzt policy unused \
+  --config /etc/mcpzt/mcpzt.yaml \
+  --snapshot .mcpzt-capabilities/github.json
+```
+
+Coverage shows the selected decision for each mapped or discovered capability. Risks highlights direct allows for high-risk actions, missing semantic mappings, side-effecting tools without argument constraints and default-decision fallthrough. Unused policy analysis finds policies that do not structurally match known capabilities, which is useful after upstream renames or server consolidation.
+
 Review new capabilities before mapping them to allowed actions. Unknown capabilities should remain denied under `runtime.default_decision: deny`.
 
 ## Incident Response
@@ -350,7 +422,7 @@ For capability drift concerns, run `mcpzt diff` against each affected server and
 
 Before exposing MCPZT to real users, confirm that the following are true.
 
-The config validates in production mode. `mcpzt config lint --strict` has no findings that should block the release. `mcpzt doctor --production --strict` has no failures. Authentication is enabled. OIDC/JWT configs have issuer and audience. `runtime.default_decision` is deny. `runtime.dry_run` is false. Host and origin controls are set where relevant. Request and response byte limits are conservative. Upstream MCP servers are private. Audit logs are protected, strict and hash-chain verification has been tested. Metrics are scraped or intentionally disabled. Approval storage is protected. Approval webhooks, if configured, have been tested. Capability snapshots exist for important servers. `mcpzt scan` has been run on those snapshots. Representative allow, deny, validator, output and approval cases have been tested.
+The config validates in production mode. `mcpzt config lint --strict` has no findings that should block the release. `mcpzt policy coverage`, `mcpzt policy risks` and `mcpzt policy unused` have been reviewed. `mcpzt doctor --production --strict` has no failures. Authentication is enabled. OIDC/JWT configs have issuer and audience. `runtime.default_decision` is deny. `runtime.dry_run` is false. Host and origin controls are set where relevant. Request and response byte limits are conservative. Upstream MCP servers are private. Audit logs are protected, strict and hash-chain verification has been tested. `mcpzt audit search` has been exercised against a sample event. Metrics are scraped or intentionally disabled. Approval storage is protected. The approval UI, if enabled, is bound to localhost or protected by internal auth. Approval webhooks, if configured, have been tested. Capability snapshots exist for important servers. `mcpzt scan` has been run on those snapshots. Representative allow, deny, validator, output and approval cases have been tested.
 
 ## Standards Notes
 

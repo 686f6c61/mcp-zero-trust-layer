@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
+from mcp_zero_trust_layer.capabilities.discovery import CapabilitySnapshot
+from mcp_zero_trust_layer.cli import main as cli_main
 from mcp_zero_trust_layer.cli.main import app
 
 
@@ -628,3 +631,387 @@ audit:
     report = json.loads(result.stdout)
     assert report["findings"][0]["rule_id"] == "missing-capability-metadata"
     assert any(finding["rule_id"] == "dangerous-tool-allowed" for finding in report["findings"])
+
+
+def test_approve_list_outputs_json_from_sqlite_backend(tmp_path: Path) -> None:
+    config = tmp_path / "mcpzt.yaml"
+    approvals = tmp_path / "approvals.sqlite3"
+    config.write_text(
+        f"""
+project:
+  name: approvals-sqlite-test
+  environment: development
+runtime:
+  default_decision: deny
+auth:
+  mode: none
+servers:
+  - name: github
+    transport: http
+    upstream: http://localhost:3001/mcp
+policies: []
+audit:
+  destination: file
+  path: ./audit.jsonl
+approvals:
+  backend: sqlite
+  path: {approvals}
+""",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["approve", "list", "--format", "json", "--config", str(config)])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == []
+    assert approvals.exists()
+
+
+def test_audit_search_outputs_filtered_json(tmp_path: Path) -> None:
+    config = tmp_path / "mcpzt.yaml"
+    audit = tmp_path / "audit.jsonl"
+    config.write_text(
+        f"""
+project:
+  name: audit-search-test
+  environment: development
+runtime:
+  default_decision: deny
+auth:
+  mode: none
+servers:
+  - name: github
+    transport: http
+    upstream: http://localhost:3001/mcp
+policies: []
+audit:
+  destination: file
+  path: {audit}
+""",
+        encoding="utf-8",
+    )
+    audit.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "timestamp": "2026-06-14T10:00:00+00:00",
+                        "event_type": "policy_decision",
+                        "server": "github",
+                        "decision": "allow",
+                        "policy_id": "allow-search",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-06-14T10:01:00+00:00",
+                        "event_type": "policy_decision",
+                        "server": "github",
+                        "decision": "deny",
+                        "policy_id": "deny-delete",
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "audit",
+            "search",
+            "--config",
+            str(config),
+            "--decision",
+            "deny",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    events = json.loads(result.stdout)
+    assert [event["policy_id"] for event in events] == ["deny-delete"]
+
+
+def test_policy_coverage_outputs_json(tmp_path: Path) -> None:
+    config = tmp_path / "mcpzt.yaml"
+    config.write_text(
+        """
+project:
+  name: coverage-test
+  environment: development
+runtime:
+  default_decision: deny
+auth:
+  mode: none
+servers:
+  - name: github
+    transport: http
+    upstream: http://localhost:3001/mcp
+capability_mappings:
+  github:
+    tools:
+      github.search_issues:
+        action: code.read
+        risk: low
+        access: read
+policies:
+  - id: allow-search
+    effect: allow
+    match:
+      server: github
+      capability: github.search_issues
+audit:
+  destination: file
+  path: ./audit.jsonl
+""",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["policy", "coverage", "--config", str(config), "--format", "json"])
+
+    assert result.exit_code == 0
+    report = json.loads(result.stdout)
+    assert report["items"][0]["capability"] == "github.search_issues"
+    assert report["items"][0]["decision"] == "allow"
+
+
+def test_onboard_generates_config_from_server_specs(tmp_path: Path, monkeypatch) -> None:
+    output = tmp_path / "generated.yaml"
+
+    def fake_discover(config, server_name, upstream):  # noqa: ANN001
+        return CapabilitySnapshot(
+            server=server_name,
+            discovered_at="2026-06-14T10:00:00Z",
+            tools=[{"name": "github.search_issues", "description": "Search issues"}],
+            resources=[],
+            prompts=[],
+        )
+
+    monkeypatch.setattr("mcp_zero_trust_layer.cli.main.discover_capabilities", fake_discover)
+
+    result = runner.invoke(
+        app,
+        [
+            "onboard",
+            "--server",
+            "github=http://localhost:3001/mcp",
+            "--output",
+            str(output),
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "github.search_issues" in output.read_text(encoding="utf-8")
+    report = json.loads(result.stdout[result.stdout.index("{") :])
+    assert report["servers"][0]["server"] == "github"
+
+
+def test_client_import_command_writes_wrapped_configs(tmp_path: Path) -> None:
+    source = tmp_path / "claude_desktop_config.json"
+    mcpzt_config = tmp_path / "mcpzt.yaml"
+    client_output = tmp_path / "claude_desktop_config.mcpzt.json"
+    source.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "pencil": {
+                        "command": "/Applications/Pencil.app/mcp-server",
+                        "args": ["--app", "desktop"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "client",
+            "import",
+            "--source",
+            str(source),
+            "--mcpzt-config",
+            str(mcpzt_config),
+            "--client-output",
+            str(client_output),
+            "--wrapper-command",
+            "/usr/local/bin/mcpzt",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Wrote MCPZT config" in result.stdout
+    assert "pencil" in mcpzt_config.read_text(encoding="utf-8")
+    rendered = json.loads(client_output.read_text(encoding="utf-8"))
+    assert rendered["mcpServers"]["pencil"]["command"] == "/usr/local/bin/mcpzt"
+    assert rendered["mcpServers"]["pencil"]["args"][-1] == "pencil"
+
+
+def test_table_json_commands_reject_unknown_format(tmp_path: Path) -> None:
+    config = tmp_path / "mcpzt.yaml"
+    audit = tmp_path / "audit.jsonl"
+    config.write_text(
+        f"""
+project:
+  name: invalid-format-test
+  environment: development
+runtime:
+  default_decision: deny
+auth:
+  mode: none
+servers:
+  - name: github
+    transport: http
+    upstream: http://localhost:3001/mcp
+capability_mappings:
+  github:
+    tools:
+      github.search_issues:
+        action: code.read
+        risk: low
+        access: read
+policies:
+  - id: allow-search
+    effect: allow
+    match:
+      server: github
+      capability: github.search_issues
+audit:
+  destination: file
+  path: {audit}
+approvals:
+  path: {tmp_path / "approvals.json"}
+""",
+        encoding="utf-8",
+    )
+    audit.write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-06-14T10:00:00+00:00",
+                "event_type": "policy_decision",
+                "server": "github",
+                "decision": "allow",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    commands = [
+        ["config", "lint", "--config", str(config), "--format", "xml"],
+        ["policy", "coverage", "--config", str(config), "--format", "xml"],
+        ["policy", "risks", "--config", str(config), "--format", "xml"],
+        ["policy", "unused", "--config", str(config), "--format", "xml"],
+        ["audit", "search", "--config", str(config), "--format", "xml"],
+        ["approve", "list", "--config", str(config), "--format", "xml"],
+    ]
+
+    for command in commands:
+        result = runner.invoke(app, command)
+        assert result.exit_code == 1
+        assert "--format must be table or json" in result.stdout
+
+
+def test_onboard_table_dry_run_and_invalid_format(tmp_path: Path, monkeypatch) -> None:
+    def fake_discover(config, server_name, upstream):  # noqa: ANN001
+        return CapabilitySnapshot(
+            server=server_name,
+            discovered_at="2026-06-14T10:00:00Z",
+            tools=[{"name": "github.delete_repository", "description": "Delete repository"}],
+            resources=[],
+            prompts=[],
+            errors={"resources": "not supported"},
+        )
+
+    monkeypatch.setattr("mcp_zero_trust_layer.cli.main.discover_capabilities", fake_discover)
+
+    dry_run = runner.invoke(
+        app,
+        [
+            "onboard",
+            "--server",
+            "github=http://localhost:3001/mcp",
+            "--output",
+            str(tmp_path / "generated.yaml"),
+            "--dry-run",
+        ],
+    )
+    invalid = runner.invoke(
+        app,
+        [
+            "onboard",
+            "--server",
+            "github=http://localhost:3001/mcp",
+            "--output",
+            str(tmp_path / "generated.yaml"),
+            "--dry-run",
+            "--format",
+            "xml",
+        ],
+    )
+
+    assert dry_run.exit_code == 0
+    assert "github.delete_repository" in dry_run.stdout
+    assert "Generated policies" in dry_run.stdout
+    assert "resources" in dry_run.stdout
+    assert invalid.exit_code == 1
+    assert "--format must be table or json" in invalid.stdout
+
+
+def test_onboard_existing_output_without_force_fails(tmp_path: Path, monkeypatch) -> None:
+    output = tmp_path / "generated.yaml"
+    output.write_text("existing", encoding="utf-8")
+
+    def fake_discover(config, server_name, upstream):  # noqa: ANN001
+        return CapabilitySnapshot(
+            server=server_name,
+            discovered_at="2026-06-14T10:00:00Z",
+            tools=[],
+            resources=[],
+            prompts=[],
+        )
+
+    monkeypatch.setattr("mcp_zero_trust_layer.cli.main.discover_capabilities", fake_discover)
+
+    result = runner.invoke(
+        app,
+        [
+            "onboard",
+            "--server",
+            "github=http://localhost:3001/mcp",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert result.exception is not None
+
+
+def test_onboard_private_helpers_handle_empty_shapes(tmp_path: Path) -> None:
+    cli_main._emit_onboard_config(
+        "project:\n  name: dry\n",
+        snapshots=[],
+        output=tmp_path / "dry.yaml",
+        force=False,
+        dry_run=True,
+        write_snapshots=True,
+        snapshot_dir=tmp_path / "snapshots",
+    )
+    cli_main._write_onboard_snapshots(
+        [],
+        write_snapshots=False,
+        snapshot_dir=tmp_path / "snapshots",
+    )
+    cli_main._print_onboard_report({"servers": "not-a-list", "generated_policies": [], "recommendations": []})
+
+    with pytest.raises(cli_main.typer.Exit):
+        cli_main._emit_onboard_report({}, "{}", "xml")
+
+    assert cli_main._onboard_error_summary("not-a-dict") == ""
+    assert cli_main._onboard_error_summary({"tools": "missing"}) == "tools"

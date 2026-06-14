@@ -20,6 +20,9 @@ MAX_ERROR_BODY_BYTES = 4096
 
 
 class HTTPUpstreamClient:
+    def __init__(self) -> None:
+        self._session_ids: dict[str, str] = {}
+
     def send(
         self,
         server: ServerConfig,
@@ -33,6 +36,8 @@ class HTTPUpstreamClient:
         forwarded_headers.update(_configured_upstream_headers(server))
         forwarded_headers.setdefault("accept", "application/json, text/event-stream")
         forwarded_headers.setdefault("content-type", "application/json")
+        if session_id := self._session_ids.get(server.name):
+            forwarded_headers.setdefault("mcp-session-id", session_id)
         try:
             with httpx.Client(timeout=server.timeout) as client:
                 with client.stream(
@@ -42,6 +47,8 @@ class HTTPUpstreamClient:
                     headers=forwarded_headers,
                 ) as response:
                     content = _read_response_content(response, server)
+                    if session_id := response.headers.get("mcp-session-id"):
+                        self._session_ids[server.name] = session_id
         except httpx.TimeoutException as exc:
             raise JSONRPCError(-32002, "Upstream timeout", {"server": server.name}) from exc
         except httpx.HTTPError as exc:

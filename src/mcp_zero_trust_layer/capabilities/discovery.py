@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from mcp_zero_trust_layer import __version__
 from mcp_zero_trust_layer.config.models import MCPZTConfig, ServerConfig
 from mcp_zero_trust_layer.upstream import UpstreamClient
 
@@ -16,6 +17,7 @@ DISCOVERY_METHODS = {
     "resources": ("resources/list", "resources", "uri"),
     "prompts": ("prompts/list", "prompts", "name"),
 }
+DISCOVERY_PROTOCOL_VERSION = "2025-03-26"
 
 
 class CapabilitySnapshot(BaseModel):
@@ -47,6 +49,7 @@ def discover_capabilities(
         server=server.name,
         discovered_at=datetime.now(timezone.utc).isoformat(),
     )
+    _initialize_for_discovery(server, upstream, snapshot)
     for field, (method, result_key, _identity_key) in DISCOVERY_METHODS.items():
         request = {"jsonrpc": "2.0", "id": field, "method": method, "params": {}}
         try:
@@ -59,6 +62,38 @@ def discover_capabilities(
         if isinstance(items, list):
             setattr(snapshot, field, items)
     return snapshot
+
+
+def _initialize_for_discovery(
+    server: ServerConfig,
+    upstream: UpstreamClient,
+    snapshot: CapabilitySnapshot,
+) -> None:
+    request = {
+        "jsonrpc": "2.0",
+        "id": "initialize",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": DISCOVERY_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "mcp-zero-trust-layer", "version": __version__},
+        },
+    }
+    try:
+        response = upstream.send(server, request)
+    except Exception as exc:  # discovery should keep collecting what it can
+        snapshot.errors["initialize"] = str(exc)
+        return
+    if isinstance(response, dict) and response.get("error"):
+        snapshot.errors["initialize"] = json.dumps(response["error"], sort_keys=True)
+        return
+    try:
+        upstream.send(
+            server,
+            {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+        )
+    except Exception as exc:
+        snapshot.errors["initialized"] = str(exc)
 
 
 def diff_snapshots(previous: CapabilitySnapshot, current: CapabilitySnapshot) -> CapabilityDiff:
@@ -111,4 +146,3 @@ def _indexed(items: list[dict[str, Any]], identity_key: str) -> dict[str, dict[s
 def _fingerprint(item: dict[str, Any]) -> str:
     canonical = json.dumps(item, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-

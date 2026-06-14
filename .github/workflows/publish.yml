@@ -153,3 +153,12 @@ jobs:
             --config /tmp/mcpzt-smoke.yaml \
             --kind json \
             --base-url http://127.0.0.1:8765
+          cat > /tmp/claude-smoke.json <<'JSON'
+          {"mcpServers":{"demo":{"command":"/bin/echo","args":["hello"]}}}
+          JSON
+          /tmp/mcpzt-pypi-smoke/bin/mcpzt client import \
+            --source /tmp/claude-smoke.json \
+            --mcpzt-config /tmp/mcpzt-imported.yaml \
+            --client-output /tmp/claude-smoke-wrapped.json \
+            --wrapper-command /tmp/mcpzt-pypi-smoke/bin/mcpzt
+          /tmp/mcpzt-pypi-smoke/bin/mcpzt config validate --config /tmp/mcpzt-imported.yaml

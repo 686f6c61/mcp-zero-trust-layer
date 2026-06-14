@@ -190,6 +190,18 @@ mcpzt diff --server github --config mcpzt.yaml
 mcpzt scan --config mcpzt.yaml --snapshot .mcpzt-capabilities/github.json
 ```
 
+For a fresh multi-MCP project, `mcpzt onboard` can generate the first complete config from several upstreams at once.
+
+```bash
+mcpzt onboard \
+  --server github=https://github-mcp.internal/mcp \
+  --server postgres=https://postgres-mcp.internal/mcp \
+  --server crm=https://crm-mcp.internal/mcp \
+  --output mcpzt.yaml
+```
+
+The generated policy file should still be reviewed. Onboarding infers metadata from names and descriptions, which is helpful for avoiding a blank page but not a substitute for knowing what each upstream tool really does. In a multi-MCP project, review server by server so a capability name such as `query`, `search` or `read` is interpreted in the right domain.
+
 Treat newly discovered tools as a review event. A new read-only tool may need only a mapping. A new write, delete, payment, email, deploy or admin tool should usually start as denied or approval-gated.
 
 When a multi-server policy behaves unexpectedly, use `policy explain` against the exact route and capability. In multi-MCP projects, many false assumptions come from matching the wrong logical server or relying on metadata that was only mapped for another server.
@@ -205,6 +217,20 @@ mcpzt policy explain \
 
 The explanation output shows whether the `postgres` mapping was found, which policies matched and why other policies were skipped. That matters because `github` and `postgres` may both have a concept of "read", but they should not accidentally share broad rules unless you intentionally write a cross-server policy.
 
+After mapping or onboarding, run policy analysis across the whole config. Without a snapshot, MCPZT analyzes configured mappings for every server. With a snapshot, it analyzes discovered capabilities for that snapshot's server. For multi-MCP projects, run the snapshot form once per important server.
+
+```bash
+mcpzt policy coverage --config mcpzt.yaml
+mcpzt policy risks --config mcpzt.yaml
+mcpzt policy unused --config mcpzt.yaml
+
+mcpzt policy coverage \
+  --config mcpzt.yaml \
+  --snapshot .mcpzt-capabilities/postgres.json
+```
+
+Coverage helps compare the shape of different servers. You may decide that GitHub `code.read` can be broadly allowed, Postgres `db.read` needs a SQL validator, filesystem reads need path constraints, and CRM reads need output redaction. Seeing those decisions side by side makes overly broad cross-server rules easier to spot.
+
 ## Audit Signals To Expect
 
 A healthy multi-MCP rollout should produce audit events that make each decision explainable. For allowed calls, audit should show the selected server, capability, policy ID and `upstream_called: true`. For denied validator failures, audit should show the validator error and `upstream_called: false`. For approval-required actions, audit should show the approval request before upstream execution and the approved retry later.
@@ -217,6 +243,13 @@ For local JSONL audit files, run hash-chain verification during review or before
 
 ```bash
 mcpzt audit verify --config mcpzt.yaml
+```
+
+When investigating one logical server, use audit search instead of scanning the whole log manually.
+
+```bash
+mcpzt audit search --config mcpzt.yaml --server postgres --decision deny
+mcpzt audit search --config mcpzt.yaml --server crm --policy-id redact-crm-secrets
 ```
 
 ## What This Scenario Does Not Prove
