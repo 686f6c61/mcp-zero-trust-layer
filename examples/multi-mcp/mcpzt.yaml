@@ -93,6 +93,13 @@ policies:
     match:
       server: github
       action: code.read
+    input:
+      required_fields:
+        - q
+      allowed_fields:
+        - q
+      max_field_bytes:
+        q: 512
 
   - id: deny-github-delete
     effect: deny
@@ -148,6 +155,13 @@ policies:
     match:
       server: crm
       action: crm.read
+    input:
+      required_fields:
+        - customer_id
+      allowed_fields:
+        - customer_id
+      max_field_bytes:
+        customer_id: 128
 
   - id: redact-crm-pii
     effect: redact

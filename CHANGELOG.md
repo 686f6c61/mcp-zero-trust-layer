@@ -4,6 +4,24 @@ All notable changes to MCP Zero Trust Layer will be documented here.
 
 The project follows SemVer during the `0.x` line with the caveat that minor versions may still change configuration shape before `1.0`.
 
+## 0.1.3 - Unreleased
+
+### Added
+
+- Added `mcpzt demo` to generate a runnable local demo with a fake MCP upstream, policy config, demo client and shell runner.
+- Added `mcpzt approve list --format json` for automation-friendly approval review.
+- Added `mcpzt config lint` with table and JSON output for insecure or fragile configuration patterns.
+- Added stricter doctor modes with `mcpzt doctor --strict` and `mcpzt doctor --production`.
+- Added release workflow steps for official GHCR container publishing and post-publish PyPI install verification.
+
+### Changed
+
+- Updated public install and deployment guidance for the current `0.x` line instead of hard-coding stale point-release language.
+- Updated Docker Compose and Helm defaults to use the official `ghcr.io/686f6c61/mcp-zero-trust-layer` image path.
+- Clarified that `claude-code` client config output is a shell command, while `json` is the machine-readable format.
+- Kept generated demo audit and approval state inside the demo directory when running `run_demo.sh`.
+- Avoided creating an approval lock file when listing an empty, not-yet-created approval store.
+
 ## 0.1.2 - 2026-06-14
 
 ### Changed

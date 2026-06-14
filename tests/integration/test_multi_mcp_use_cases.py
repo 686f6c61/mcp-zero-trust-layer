@@ -275,6 +275,11 @@ def _multi_mcp_config(
                     "id": "allow-github-read",
                     "effect": "allow",
                     "match": {"server": "github", "action": "code.read"},
+                    "input": {
+                        "required_fields": ["q"],
+                        "allowed_fields": ["q"],
+                        "max_field_bytes": {"q": 512},
+                    },
                 },
                 {
                     "id": "deny-github-delete",
@@ -333,6 +338,11 @@ def _multi_mcp_config(
                     "id": "allow-crm-read",
                     "effect": "allow",
                     "match": {"server": "crm", "action": "crm.read"},
+                    "input": {
+                        "required_fields": ["customer_id"],
+                        "allowed_fields": ["customer_id"],
+                        "max_field_bytes": {"customer_id": 128},
+                    },
                 },
                 {
                     "id": "redact-crm-pii",

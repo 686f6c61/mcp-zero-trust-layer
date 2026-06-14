@@ -2,5 +2,5 @@ apiVersion: v2
 name: mcp-zero-trust-layer
 description: Zero Trust policy enforcement layer for MCP servers.
 type: application
-version: 0.1.2
-appVersion: "0.1.2"
+version: 0.1.3
+appVersion: "0.1.3"

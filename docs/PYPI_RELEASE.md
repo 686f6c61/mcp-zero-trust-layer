@@ -91,9 +91,11 @@ mcpzt version
 mcpzt pack list
 mcpzt init --config /tmp/mcpzt.yaml --force
 mcpzt config validate --config /tmp/mcpzt.yaml
+mcpzt config lint --config /tmp/mcpzt.yaml
 mcpzt config schema --output /tmp/mcpzt.schema.json
 mcpzt doctor --config /tmp/mcpzt.yaml
 mcpzt client config --config /tmp/mcpzt.yaml --base-url http://127.0.0.1:8765
+mcpzt demo --output /tmp/mcpzt-demo --force
 mcpzt policy test \
   --config examples/github-readonly/mcpzt.yaml \
   --server github \
@@ -120,7 +122,9 @@ python -m venv /tmp/mcpzt-wheel-smoke
 /tmp/mcpzt-wheel-smoke/bin/mcpzt pack list
 /tmp/mcpzt-wheel-smoke/bin/mcpzt init --config /tmp/mcpzt-smoke.yaml --force
 /tmp/mcpzt-wheel-smoke/bin/mcpzt config validate --config /tmp/mcpzt-smoke.yaml
+/tmp/mcpzt-wheel-smoke/bin/mcpzt config lint --config /tmp/mcpzt-smoke.yaml
 /tmp/mcpzt-wheel-smoke/bin/mcpzt client config --config /tmp/mcpzt-smoke.yaml
+/tmp/mcpzt-wheel-smoke/bin/mcpzt demo --output /tmp/mcpzt-wheel-demo --force
 ```
 
 This catches missing package data, broken entry points and metadata issues that may not show up during editable development.
@@ -130,40 +134,40 @@ This catches missing package data, broken entry points and metadata issues that 
 Inspect the source distribution before publishing. The goal is to prove that public docs are included and private docs are absent.
 
 ```bash
-tar -tzf dist/mcp_zero_trust_layer-0.1.0.tar.gz | sort
+tar -tzf dist/mcp_zero_trust_layer-*.tar.gz | sort
 ```
 
 Check the docs that will ship.
 
 ```bash
-tar -tzf dist/mcp_zero_trust_layer-0.1.0.tar.gz | rg '(^|/)docs/'
+tar -tzf dist/mcp_zero_trust_layer-*.tar.gz | rg '(^|/)docs/'
 ```
 
 Expected public docs:
 
 ```text
-mcp_zero_trust_layer-0.1.0/docs/MULTI_MCP_USE_CASES.md
-mcp_zero_trust_layer-0.1.0/docs/PRODUCTION.md
-mcp_zero_trust_layer-0.1.0/docs/PYPI_RELEASE.md
+mcp_zero_trust_layer-<version>/docs/MULTI_MCP_USE_CASES.md
+mcp_zero_trust_layer-<version>/docs/PRODUCTION.md
+mcp_zero_trust_layer-<version>/docs/PYPI_RELEASE.md
 ```
 
 Check the deployment recipes that will ship in the source distribution.
 
 ```bash
-tar -tzf dist/mcp_zero_trust_layer-0.1.0.tar.gz | rg '(^|/)deploy/'
+tar -tzf dist/mcp_zero_trust_layer-*.tar.gz | rg '(^|/)deploy/'
 ```
 
 Check for local state and obviously private material. This command should produce no output. Keep any organization-specific private deny-list in your local release runbook rather than publishing the private filenames in public documentation.
 
 ```bash
-tar -tzf dist/mcp_zero_trust_layer-0.1.0.tar.gz \
+tar -tzf dist/mcp_zero_trust_layer-*.tar.gz \
   | rg '(^|/)(internal|notes|scratch|secrets)/|\\.env|mcpzt-audit|mcpzt-approvals'
 ```
 
 Also inspect the wheel when package data changes.
 
 ```bash
-unzip -l dist/mcp_zero_trust_layer-0.1.0-py3-none-any.whl
+unzip -l dist/mcp_zero_trust_layer-*-py3-none-any.whl
 ```
 
 The wheel should contain Python package code, `py.typed`, bundled policy packs and metadata. It does not need to contain public docs or deployment recipes because the README and metadata are carried in the distribution metadata, and the source distribution carries the public docs and operational examples.
@@ -192,13 +196,21 @@ Any config-breaking change should be called out in `CHANGELOG.md` with migration
 
 ## GitHub Actions Publishing
 
-The repository uses `.github/workflows/publish.yml` for release publishing. It builds distributions, validates them, uploads the build artifact inside GitHub Actions, and publishes through `pypa/gh-action-pypi-publish`.
+The repository uses `.github/workflows/publish.yml` for release publishing. It builds distributions, validates them, uploads the build artifact inside GitHub Actions, and publishes through `pypa/gh-action-pypi-publish`. The same release workflow also publishes the official container image to GitHub Container Registry and then installs the just-published PyPI package in a fresh environment.
 
 The publish job must have:
 
 ```yaml
 permissions:
   id-token: write
+```
+
+The container job must have package write permission because GHCR is backed by GitHub Packages.
+
+```yaml
+permissions:
+  contents: read
+  packages: write
 ```
 
 The PyPI project must trust the GitHub Actions publisher. Configure the publisher in PyPI with the repository owner, repository name, workflow filename and environment name. For this repository, the workflow environment is:
@@ -230,7 +242,7 @@ Manual TestPyPI uploads with `twine upload` are acceptable only as a fallback fo
 
 Prepare the release on a branch. Update version fields, update `CHANGELOG.md`, update public docs if behavior changed, and run the local preflight. Build the artifacts locally and inspect them. Confirm the wheel smoke test passes.
 
-After merging to `main`, create a GitHub release. The current publish workflow is triggered when a GitHub release is published. GitHub Actions should run tests, build artifacts, validate metadata, and publish through Trusted Publishing.
+After merging to `main`, create a GitHub release. The current publish workflow is triggered when a GitHub release is published. GitHub Actions should run tests, build artifacts, validate metadata, publish through Trusted Publishing, publish the GHCR image and run the post-publish install check.
 
 After publication, smoke test the package exactly as a user would.
 
@@ -239,12 +251,19 @@ uvx mcp-zero-trust-layer --help
 uvx mcp-zero-trust-layer version
 uvx mcp-zero-trust-layer init --config /tmp/mcpzt.yaml --force
 uvx mcp-zero-trust-layer config validate --config /tmp/mcpzt.yaml
+uvx mcp-zero-trust-layer config lint --config /tmp/mcpzt.yaml
 ```
 
 Then test `pipx`.
 
 ```bash
 pipx run mcp-zero-trust-layer --help
+```
+
+Then test the container image for the same release tag.
+
+```bash
+docker run --rm ghcr.io/686f6c61/mcp-zero-trust-layer:<version> version
 ```
 
 If the package installs and the CLI works, announce the release with the version, headline changes, security notes and any migration guidance.

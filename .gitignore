@@ -68,9 +68,11 @@ id_ed25519.*
 /*.local.yaml
 /*.secret.yaml
 mcpzt-audit*.jsonl
+mcpzt-*-audit.jsonl
 audit*.jsonl
 *.audit.jsonl
 mcpzt-approvals*.json
+mcpzt-approvals*.json.lock
 mcpzt-state/
 .mcpzt/
 .mcpzt-capabilities/

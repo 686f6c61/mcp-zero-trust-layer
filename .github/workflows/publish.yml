@@ -72,3 +72,83 @@ jobs:
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-container:
+    name: Publish container image
+    needs: ["publish"]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract container metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build and push container image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+          sbom: true
+
+  verify-pypi:
+    name: Verify published PyPI install
+    needs: ["publish"]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install and smoke test published package
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          python -m venv /tmp/mcpzt-pypi-smoke
+          for attempt in {1..12}; do
+            if /tmp/mcpzt-pypi-smoke/bin/python -m pip install \
+              --disable-pip-version-check \
+              --no-cache-dir \
+              "mcp-zero-trust-layer==${VERSION}"; then
+              break
+            fi
+            if [ "$attempt" = "12" ]; then
+              exit 1
+            fi
+            sleep 10
+          done
+          /tmp/mcpzt-pypi-smoke/bin/mcpzt version | grep -Fx "${VERSION}"
+          /tmp/mcpzt-pypi-smoke/bin/mcpzt init --config /tmp/mcpzt-smoke.yaml
+          /tmp/mcpzt-pypi-smoke/bin/mcpzt config validate --config /tmp/mcpzt-smoke.yaml
+          /tmp/mcpzt-pypi-smoke/bin/mcpzt config lint --config /tmp/mcpzt-smoke.yaml
+          /tmp/mcpzt-pypi-smoke/bin/mcpzt client config \
+            --config /tmp/mcpzt-smoke.yaml \
+            --kind json \
+            --base-url http://127.0.0.1:8765

@@ -135,6 +135,32 @@ mcpzt client config \
 
 The important detail is the URL shape. A GitHub client entry points to `/mcp/github`, Postgres points to `/mcp/postgres`, filesystem points to `/mcp/filesystem`, and CRM points to `/mcp/crm`. That keeps client configuration simple while leaving policy isolation in MCPZT.
 
+The same logical routes can be rendered for different clients. Use the client-specific output when configuring a desktop or IDE client, and use the neutral JSON output when feeding another script or deployment template. `claude-desktop`, `cursor` and `vscode` emit JSON config. `claude-code` emits `claude mcp add` commands that can be reviewed and run from a shell.
+
+```bash
+mcpzt client config \
+  --config examples/multi-mcp/mcpzt.yaml \
+  --base-url http://127.0.0.1:8765 \
+  --kind cursor
+
+mcpzt client config \
+  --config examples/multi-mcp/mcpzt.yaml \
+  --base-url http://127.0.0.1:8765 \
+  --kind vscode
+
+mcpzt client config \
+  --config examples/multi-mcp/mcpzt.yaml \
+  --base-url http://127.0.0.1:8765 \
+  --kind claude-code
+
+mcpzt client config \
+  --config examples/multi-mcp/mcpzt.yaml \
+  --base-url http://127.0.0.1:8765 \
+  --kind json
+```
+
+In every generated form, the client points to MCPZT. The upstream MCP URLs remain only in `mcpzt.yaml`, which is what preserves the security boundary. If a client is configured directly against the upstream, MCPZT cannot filter discovery, enforce validators, request approvals or redact output.
+
 ## Translating To A Real Deployment
 
 Replace the example upstream URLs with private internal MCP endpoints.

@@ -252,7 +252,8 @@ Before switching to enforcement, run:
 
 ```bash
 mcpzt config validate --config mcpzt.yaml
-mcpzt doctor --config mcpzt.yaml
+mcpzt config lint --strict --config mcpzt.yaml
+mcpzt doctor --production --strict --config mcpzt.yaml
 python -m pytest
 ```
 
@@ -294,6 +295,7 @@ Approvals are for actions that are allowed in principle but should not execute a
 
 ```bash
 mcpzt approve list --config /etc/mcpzt/mcpzt.yaml
+mcpzt approve list --format json --config /etc/mcpzt/mcpzt.yaml
 mcpzt approve show <approval-id> --config /etc/mcpzt/mcpzt.yaml
 mcpzt approve allow <approval-id> \
   --config /etc/mcpzt/mcpzt.yaml \
@@ -302,6 +304,8 @@ mcpzt approve allow <approval-id> \
 ```
 
 Approved retries are bound to the original identity, server, capability, policy and argument hash. If the retry changes the arguments, the previous approval is invalid. The approval ID is stripped before the request reaches upstream.
+
+Use the table output for human operators and the JSON output for review dashboards, ticketing glue or internal approval UIs. Automation should not scrape terminal tables because column widths and styling are optimized for people.
 
 The local JSON approval store uses file locking and atomic replace. For larger multi-instance deployments, keep the approval path on storage with correct locking semantics or plan a database-backed approval backend before scaling horizontally.
 
@@ -346,7 +350,7 @@ For capability drift concerns, run `mcpzt diff` against each affected server and
 
 Before exposing MCPZT to real users, confirm that the following are true.
 
-The config validates in production mode. `mcpzt doctor` has no failures. Authentication is enabled. OIDC/JWT configs have issuer and audience. `runtime.default_decision` is deny. `runtime.dry_run` is false. Host and origin controls are set where relevant. Request and response byte limits are conservative. Upstream MCP servers are private. Audit logs are protected, strict and hash-chain verification has been tested. Metrics are scraped or intentionally disabled. Approval storage is protected. Approval webhooks, if configured, have been tested. Capability snapshots exist for important servers. `mcpzt scan` has been run on those snapshots. Representative allow, deny, validator, output and approval cases have been tested.
+The config validates in production mode. `mcpzt config lint --strict` has no findings that should block the release. `mcpzt doctor --production --strict` has no failures. Authentication is enabled. OIDC/JWT configs have issuer and audience. `runtime.default_decision` is deny. `runtime.dry_run` is false. Host and origin controls are set where relevant. Request and response byte limits are conservative. Upstream MCP servers are private. Audit logs are protected, strict and hash-chain verification has been tested. Metrics are scraped or intentionally disabled. Approval storage is protected. Approval webhooks, if configured, have been tested. Capability snapshots exist for important servers. `mcpzt scan` has been run on those snapshots. Representative allow, deny, validator, output and approval cases have been tested.
 
 ## Standards Notes
 

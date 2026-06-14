@@ -35,7 +35,7 @@ The important design point is that MCPZT is not a SaaS requirement. It runs loca
 
 ## Status
 
-Current version: `0.1.0` developer preview.
+Current line: `0.x` developer preview. Use `mcpzt version`, the PyPI project page or the GitHub releases page to confirm the exact installed version.
 
 The core path is implemented. The package has a CLI, YAML config validation, HTTP proxy mode, stdio wrapper mode, multi-MCP routing, policy evaluation, policy explanation, parameter-level controls, validators, approvals, output enforcement, capability discovery, deterministic scanning, audit logging with hash-chain verification, Prometheus metrics, authentication modes, secret references, client config generation, examples, deployment recipes, Docker packaging and PyPI-ready build metadata.
 
@@ -55,6 +55,20 @@ The result is a boring but useful control point. Boring is good here. You want a
 
 ## Installation
 
+For most users, install MCPZT from PyPI into an isolated environment. This gives you the `mcpzt` command without cloning the repository.
+
+```bash
+python -m pip install mcp-zero-trust-layer
+mcpzt version
+```
+
+For one-off usage without keeping a permanent environment, use `uvx` or `pipx run`. This is a good fit when you want to initialize a config, validate a repository, generate client config or run a local wrapper from a clean install.
+
+```bash
+uvx mcp-zero-trust-layer version
+pipx run mcp-zero-trust-layer version
+```
+
 For local development from this repository, create a virtual environment and install the package in editable mode.
 
 ```bash
@@ -70,16 +84,10 @@ mcpzt version
 mcp-zero-trust-layer version
 ```
 
-When the package is published to PyPI, the intended zero-install flow is through `uvx`.
+Docker is also supported. Use the published GHCR image for release deployments, or build a local image when testing changes from a checkout. The Dockerfile installs the package with `constraints.txt`, which keeps image builds reproducible while leaving PyPI dependency ranges flexible for library users.
 
 ```bash
-uvx mcp-zero-trust-layer init
-uvx mcp-zero-trust-layer config validate
-```
-
-Docker is also supported. The Dockerfile installs the package with `constraints.txt`, which keeps image builds reproducible while leaving PyPI dependency ranges flexible for library users.
-
-```bash
+docker run --rm ghcr.io/686f6c61/mcp-zero-trust-layer:<version> version
 docker build -t mcpzt:local .
 docker run --rm mcpzt:local version
 ```
@@ -90,6 +98,22 @@ You can validate an example config inside Docker without giving the container wr
 docker run --rm \
   -v "$PWD/examples/multi-mcp:/cfg:ro" \
   mcpzt:local config validate --config /cfg/mcpzt.yaml
+```
+
+After any install path, run a small verification sequence. It proves that the CLI starts, config generation works, the schema validates and the client config generator can produce JSON without touching a real MCP server.
+
+```bash
+mcpzt init --config /tmp/mcpzt.yaml --force
+mcpzt config validate --config /tmp/mcpzt.yaml
+mcpzt config lint --config /tmp/mcpzt.yaml
+mcpzt client config --config /tmp/mcpzt.yaml --kind json
+```
+
+If you want to see the gateway behave end to end before connecting a real MCP, generate the local demo. It creates a fake upstream MCP server, a policy file, a tiny client and a runner script. The demo shows capability filtering, an allowed call, a denied call and output redaction.
+
+```bash
+mcpzt demo --output mcpzt-demo
+./mcpzt-demo/run_demo.sh
 ```
 
 ## How To Think About MCPZT
@@ -134,16 +158,25 @@ Validate the config before running a proxy or wrapper. This catches structural e
 mcpzt config validate --config mcpzt.yaml
 ```
 
+Run the linter next. Validation answers "is this config structurally valid?". Linting answers the more operational question: "does this config look too permissive, fragile or easy to misuse?". A development config with `auth.mode: none` may produce warnings; a production config should be clean under strict mode.
+
+```bash
+mcpzt config lint --config mcpzt.yaml
+mcpzt config lint --strict --config mcpzt.yaml
+```
+
 The JSON Schema can be exported for editor integration, CI validation or documentation.
 
 ```bash
 mcpzt config schema --output mcpzt.schema.json
 ```
 
-`doctor` is the practical sanity check. It validates the config, checks configured commands, checks secret environment references, warns about weak local choices, and fails when it sees dangerous production posture.
+`doctor` is the practical sanity check. It validates the config, checks configured commands, checks secret environment references, warns about weak local choices, and fails when it sees dangerous production posture. For CI or release preparation, use strict mode so warnings become a failing signal.
 
 ```bash
 mcpzt doctor --config mcpzt.yaml
+mcpzt doctor --strict --config mcpzt.yaml
+mcpzt doctor --production --strict --config mcpzt.yaml
 ```
 
 Before connecting a real MCP client, test policy decisions from the CLI. This is one of the fastest ways to understand whether a policy is matching what you think it is matching.
@@ -191,6 +224,15 @@ mcpzt client config \
   --config examples/multi-mcp/mcpzt.yaml \
   --base-url http://127.0.0.1:8765 \
   --kind claude-desktop
+```
+
+Choose the output kind for the client you are configuring. `claude-desktop`, `cursor` and `vscode` produce JSON client config shapes. `claude-code` produces ready-to-run `claude mcp add` commands because that client is commonly configured from its CLI. `json` produces the raw neutral object, which is useful for scripts, tests and custom client generators.
+
+```bash
+mcpzt client config --config mcpzt.yaml --kind cursor
+mcpzt client config --config mcpzt.yaml --kind vscode
+mcpzt client config --config mcpzt.yaml --kind claude-code
+mcpzt client config --config mcpzt.yaml --kind json
 ```
 
 For command-based MCP servers, use the stdio wrapper. This mode keeps stdout reserved for MCP protocol traffic, so audit output must go to a file rather than stdout.
@@ -556,10 +598,13 @@ The first call stops before upstream and returns a controlled JSON-RPC error con
 
 ```bash
 mcpzt approve list --config mcpzt.yaml
+mcpzt approve list --format json --config mcpzt.yaml
 mcpzt approve show <approval-id> --config mcpzt.yaml
 mcpzt approve allow <approval-id> --config mcpzt.yaml --by ana@example.com --comment "reviewed"
 mcpzt approve deny <approval-id> --config mcpzt.yaml --by ana@example.com --comment "not approved"
 ```
+
+The table output is meant for humans. The JSON output is meant for review tools, operational scripts and any UI that wants to render pending approval requests without scraping terminal formatting.
 
 The approval ID is stripped before forwarding the request upstream. The real MCP server does not need to understand MCPZT approvals.
 
@@ -841,9 +886,12 @@ In a sidecar deployment, the real MCP server binds to localhost inside the same 
 The repository includes public deployment recipes under `deploy/`. The Docker Compose production example runs the container with a read-only filesystem, dropped Linux capabilities and explicit environment-backed secrets. The Helm chart is a starting point for Kubernetes sidecar or gateway deployments. It defaults to one replica because the current approval store is file-backed; scale-out deployments should use shared storage with correct locking semantics or a future database-backed approval backend.
 
 ```bash
+docker run --rm ghcr.io/686f6c61/mcp-zero-trust-layer:<version> version
 docker compose -f deploy/docker-compose.prod.yaml up
 helm install mcpzt deploy/helm
 ```
+
+The official image is published to GitHub Container Registry from the release workflow. The Compose and Helm examples use that image path so operators can start from a known release artifact instead of rebuilding locally. Teams that need custom certificates, internal package mirrors or pinned base images can still build their own image from the Dockerfile.
 
 ## Production Posture
 
@@ -887,7 +935,7 @@ python -m build
 twine check dist/*
 ```
 
-Current verification in this workspace: `.venv/bin/pytest -q` passes with 82 tests. Before release, also run `ruff check .`, `mcpzt config validate --config examples/multi-mcp/mcpzt.yaml`, and `python -m build && twine check dist/*`.
+Before release, also run `mcpzt config validate --config examples/multi-mcp/mcpzt.yaml`, `mcpzt config lint --config examples/multi-mcp/mcpzt.yaml`, `mcpzt demo --output /tmp/mcpzt-demo --force`, and a clean wheel smoke test. The release workflow repeats the important parts in CI and performs a post-publish install check from PyPI.
 
 ## Packaging
 
@@ -909,7 +957,7 @@ If the upstream never receives a request, check audit for `upstream_called: fals
 
 If the upstream receives a request but the client gets redacted data, look for output policies using `effect: redact`, `effect: limit` or `effect: transform`. Output policies run after upstream and before client response.
 
-## Limitations In 0.1.0
+## Limitations In 0.x
 
 HTTP GET SSE streams are not implemented. Request-scoped upstream SSE passthrough is intentionally outside this first release. The local JSON approval store is suitable for local and simple self-hosted use; larger teams may eventually want a database-backed approval backend. The URL validator is a strong guardrail but not a replacement for network egress controls. MCPZT reduces MCP tool risk, but it does not claim complete protection against prompt injection or all forms of agent misuse.
 

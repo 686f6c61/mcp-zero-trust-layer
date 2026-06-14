@@ -22,7 +22,7 @@ from mcp_zero_trust_layer.capabilities.discovery import (
     write_snapshot,
 )
 from mcp_zero_trust_layer.config import load_config
-from mcp_zero_trust_layer.config.models import MCPZTConfig, ServerConfig
+from mcp_zero_trust_layer.config.models import MCPZTConfig, PolicyConfig, ServerConfig
 from mcp_zero_trust_layer.config.secrets import (
     referenced_env_vars,
     referenced_secret_sources,
@@ -117,6 +117,255 @@ approvals:
 """
 
 
+DEMO_FAKE_MCP = '''from __future__ import annotations
+
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
+
+
+class DemoMCPHandler(BaseHTTPRequestHandler):
+    def log_message(self, fmt: str, *args: Any) -> None:
+        return
+
+    def do_POST(self) -> None:  # noqa: N802
+        size = int(self.headers.get("content-length", "0"))
+        message = json.loads(self.rfile.read(size))
+        if "id" not in message:
+            self.send_response(202)
+            self.end_headers()
+            return
+        payload = self._response(message)
+        raw = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _response(self, message: dict[str, Any]) -> dict[str, Any]:
+        request_id = message.get("id")
+        method = message.get("method")
+        if method == "tools/list":
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "tools": [
+                        {"name": "demo.safe_echo", "description": "Echo a short message."},
+                        {
+                            "name": "demo.delete_everything",
+                            "description": "Dangerous demo action that policy denies.",
+                        },
+                        {
+                            "name": "demo.get_customer",
+                            "description": "Return a customer record with sensitive fields.",
+                        },
+                    ]
+                },
+            }
+        if method == "tools/call":
+            tool = message["params"]["name"]
+            arguments = message["params"].get("arguments", {})
+            if tool == "demo.safe_echo":
+                return {"jsonrpc": "2.0", "id": request_id, "result": {"echo": arguments["message"]}}
+            if tool == "demo.delete_everything":
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {"content": [{"type": "text", "text": "this should not run"}]},
+                }
+            if tool == "demo.get_customer":
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "customer_id": arguments.get("customer_id", "cust_123"),
+                        "name": "Ana",
+                        "email": "ana@example.com",
+                        "api_key": "sk-demo-secret",
+                    },
+                }
+        return {"jsonrpc": "2.0", "id": request_id, "result": {}}
+
+
+if __name__ == "__main__":
+    server = ThreadingHTTPServer(("127.0.0.1", 3001), DemoMCPHandler)
+    print("fake MCP listening on http://127.0.0.1:3001/mcp", flush=True)
+    server.serve_forever()
+'''
+
+
+DEMO_CONFIG = """project:
+  name: mcpzt-demo
+  environment: development
+
+runtime:
+  mode: gateway
+  default_decision: deny
+
+auth:
+  mode: none
+
+servers:
+  - name: demo
+    transport: http
+    upstream: http://127.0.0.1:3001/mcp
+
+capability_mappings:
+  demo:
+    tools:
+      demo.safe_echo:
+        action: demo.read
+        risk: low
+        access: read
+      demo.delete_everything:
+        action: demo.delete
+        risk: critical
+        access: delete
+      demo.get_customer:
+        action: crm.read
+        risk: medium
+        access: read
+        data_classification: confidential
+
+policies:
+  - id: allow-demo-echo
+    effect: allow
+    match:
+      server: demo
+      capability: demo.safe_echo
+    input:
+      required_fields: [message]
+      allowed_fields: [message]
+      max_field_bytes:
+        message: 120
+
+  - id: deny-demo-delete
+    effect: deny
+    match:
+      server: demo
+      capability: demo.delete_everything
+
+  - id: allow-demo-customer-read
+    effect: allow
+    match:
+      server: demo
+      capability: demo.get_customer
+    input:
+      required_fields: [customer_id]
+      allowed_fields: [customer_id]
+
+  - id: redact-demo-customer-secrets
+    effect: redact
+    match:
+      server: demo
+      capability: demo.get_customer
+    when:
+      output.email:
+        exists: true
+    output:
+      redact_fields: [email, api_key]
+
+audit:
+  destination: file
+  path: ./mcpzt-demo-audit.jsonl
+  hash_chain: true
+
+approvals:
+  path: ./mcpzt-demo-approvals.json
+"""
+
+
+DEMO_CLIENT = '''from __future__ import annotations
+
+import json
+import sys
+import urllib.request
+from typing import Any
+
+
+BASE_URL = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "http://127.0.0.1:8765"
+
+
+def rpc(request_id: int, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = json.dumps(
+        {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}}
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"{BASE_URL}/mcp/demo",
+        data=payload,
+        method="POST",
+        headers={"content-type": "application/json", "accept": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def call_tool(request_id: int, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return rpc(request_id, "tools/call", {"name": name, "arguments": arguments})
+
+
+cases = {
+    "visible tools": rpc(1, "tools/list"),
+    "allowed echo": call_tool(2, "demo.safe_echo", {"message": "hello zero trust"}),
+    "denied delete": call_tool(3, "demo.delete_everything", {}),
+    "redacted customer": call_tool(4, "demo.get_customer", {"customer_id": "cust_123"}),
+}
+
+for title, payload in cases.items():
+    print(f"\\n## {title}")
+    print(json.dumps(payload, indent=2, sort_keys=True))
+'''
+
+
+DEMO_RUNNER = """#!/usr/bin/env sh
+set -eu
+
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PYTHON=${PYTHON:-python3}
+MCPZT=${MCPZT:-mcpzt}
+cd "$DIR"
+
+cleanup() {
+  if [ "${GATEWAY_PID:-}" ]; then kill "$GATEWAY_PID" 2>/dev/null || true; fi
+  if [ "${UPSTREAM_PID:-}" ]; then kill "$UPSTREAM_PID" 2>/dev/null || true; fi
+}
+trap cleanup EXIT INT TERM
+
+"$PYTHON" fake_mcp.py &
+UPSTREAM_PID=$!
+sleep 1
+
+"$MCPZT" run --config mcpzt.yaml --host 127.0.0.1 --port 8765 &
+GATEWAY_PID=$!
+sleep 2
+
+"$PYTHON" demo_client.py http://127.0.0.1:8765
+"""
+
+
+DEMO_README = """# MCPZT Demo
+
+This directory is generated by `mcpzt demo`.
+
+Run the whole demo with:
+
+```bash
+./run_demo.sh
+```
+
+The script starts a fake HTTP MCP server, starts MCPZT in front of it, then sends four requests:
+
+- `tools/list`, where the dangerous tool is hidden by policy.
+- `demo.safe_echo`, which is allowed.
+- `demo.delete_everything`, which is denied before the upstream sees it.
+- `demo.get_customer`, which is allowed but returns redacted `email` and `api_key` fields.
+
+The demo uses `auth.mode: none` so it can run without credentials. Real deployments should configure authentication and run `mcpzt doctor --strict --config mcpzt.yaml`.
+"""
+
+
 @app.command()
 def version() -> None:
     """Show the installed MCP Zero Trust Layer version."""
@@ -135,6 +384,34 @@ def init(
         raise typer.BadParameter(f"{path} already exists; pass --force to overwrite")
     path.write_text(DEFAULT_CONFIG, encoding="utf-8")
     console.print(f"[green]Created[/green] {path}")
+
+
+@app.command()
+def demo(
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Directory where the demo files will be written."),
+    ] = Path("mcpzt-demo"),
+    force: Annotated[bool, typer.Option(help="Overwrite existing demo files.")] = False,
+) -> None:
+    """Create a runnable local demo with a fake MCP upstream."""
+    files = {
+        "fake_mcp.py": DEMO_FAKE_MCP,
+        "mcpzt.yaml": DEMO_CONFIG,
+        "demo_client.py": DEMO_CLIENT,
+        "run_demo.sh": DEMO_RUNNER,
+        "README.md": DEMO_README,
+    }
+    if output.exists() and not force and any((output / name).exists() for name in files):
+        raise typer.BadParameter(f"{output} already contains demo files; pass --force to overwrite")
+    output.mkdir(parents=True, exist_ok=True)
+    for name, content in files.items():
+        path = output / name
+        path.write_text(content, encoding="utf-8")
+        if name == "run_demo.sh":
+            path.chmod(0o755)
+    console.print(f"[green]Created demo[/green] {output}")
+    console.print(f"Run it with: [bold]{output / 'run_demo.sh'}[/bold]")
 
 
 @config_app.command("validate")
@@ -166,6 +443,36 @@ def config_schema(
         console.print(f"[green]Wrote[/green] {output}")
         return
     console.print(rendered)
+
+
+@config_app.command("lint")
+def config_lint(
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: table or json."),
+    ] = "table",
+    strict: Annotated[bool, typer.Option(help="Exit non-zero when warnings are present.")] = False,
+) -> None:
+    """Report insecure or fragile configuration patterns."""
+    try:
+        config = load_config(path)
+    except ConfigError as exc:
+        console.print(f"[red]Cannot lint config:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    findings = _lint_config(config)
+    if output_format == "json":
+        console.print_json(json.dumps(findings))
+    elif output_format == "table":
+        _print_lint_table(findings)
+    else:
+        console.print("[red]--format must be table or json[/red]")
+        raise typer.Exit(1)
+
+    has_errors = any(finding["severity"] == "error" for finding in findings)
+    has_warnings = any(finding["severity"] == "warning" for finding in findings)
+    if has_errors or (strict and has_warnings):
+        raise typer.Exit(1)
 
 
 @policy_app.command("test")
@@ -396,10 +703,21 @@ def audit_verify(
 @approve_app.command("list")
 def approve_list(
     path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: table or json."),
+    ] = "table",
 ) -> None:
     """List pending approvals."""
     config = load_config(path)
     approvals = ApprovalStore(config.approvals).list()
+    if output_format == "json":
+        payload = [approval.model_dump(mode="json") for approval in approvals]
+        console.print_json(json.dumps(payload))
+        return
+    if output_format != "table":
+        console.print("[red]--format must be table or json[/red]")
+        raise typer.Exit(1)
     table = Table(expand=False)
     table.add_column("ID", no_wrap=True, overflow="ignore")
     table.add_column("Status", no_wrap=True)
@@ -504,7 +822,10 @@ def client_config(
         typer.Option(
             "--kind",
             "-k",
-            help="claude-desktop, cursor, vscode, claude-code, or json.",
+            help=(
+                "claude-desktop, cursor, vscode, claude-code, or json. "
+                "Use json for machine-readable output; claude-code emits CLI commands."
+            ),
         ),
     ] = "claude-desktop",
     path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
@@ -532,6 +853,11 @@ def client_config(
 @app.command()
 def doctor(
     path: Annotated[Path | None, typer.Option("--config", "-c")] = None,
+    strict: Annotated[bool, typer.Option(help="Exit non-zero when warnings are present.")] = False,
+    production: Annotated[
+        bool,
+        typer.Option(help="Require the loaded config to use production posture."),
+    ] = False,
 ) -> None:
     """Diagnose local environment and optional MCPZT config."""
     checks: list[tuple[str, str, str]] = []
@@ -539,13 +865,22 @@ def doctor(
     config: MCPZTConfig | None = None
 
     if path is None:
-        _doctor_add(checks, "WARN", "config", "pass --config to validate a project config")
+        status = "FAIL" if production else "WARN"
+        _doctor_add(checks, status, "config", "pass --config to validate a project config")
     else:
         try:
             config = load_config(path)
         except ConfigError as exc:
             _doctor_add(checks, "FAIL", "config", str(exc))
         else:
+            if production and config.project.environment != "production":
+                _doctor_add(
+                    checks,
+                    "FAIL",
+                    "config",
+                    f"--production requires project.environment: production, got "
+                    f"{config.project.environment}",
+                )
             _doctor_add(
                 checks,
                 "OK",
@@ -561,8 +896,284 @@ def doctor(
         table.add_row(f"[{style}]{status}[/{style}]", check, details)
     console.print(table)
 
-    if any(status == "FAIL" for status, _, _ in checks):
+    if any(status == "FAIL" for status, _, _ in checks) or (
+        strict and any(status == "WARN" for status, _, _ in checks)
+    ):
         raise typer.Exit(1)
+
+
+def _lint_config(config: MCPZTConfig) -> list[dict[str, str]]:
+    findings: list[dict[str, str]] = []
+    _lint_runtime(config, findings)
+    _lint_auth(config, findings)
+    _lint_servers(config, findings)
+    _lint_policies(config, findings)
+    _lint_capability_mappings(config, findings)
+    _lint_state(config, findings)
+    return findings
+
+
+def _lint_runtime(config: MCPZTConfig, findings: list[dict[str, str]]) -> None:
+    if config.runtime.default_decision == "allow":
+        _lint_add(
+            findings,
+            "warning",
+            "runtime.default_decision",
+            "runtime.default_decision is allow",
+            "Use default_decision: deny and add explicit allow policies.",
+        )
+    if config.runtime.dry_run:
+        severity = "error" if config.project.environment == "production" else "warning"
+        _lint_add(
+            findings,
+            severity,
+            "runtime.dry_run",
+            "runtime.dry_run is enabled",
+            "Use dry_run only while learning policy impact.",
+        )
+    if config.runtime.allow_auth_none_in_production:
+        _lint_add(
+            findings,
+            "warning",
+            "runtime.allow_auth_none_in_production",
+            "production auth-none override is enabled",
+            "Remove this override before public or shared deployments.",
+        )
+    if config.runtime.allow_dry_run_in_production:
+        _lint_add(
+            findings,
+            "warning",
+            "runtime.allow_dry_run_in_production",
+            "production dry-run override is enabled",
+            "Remove this override before relying on enforcement.",
+        )
+    if config.project.environment == "production" and not config.runtime.allowed_origins:
+        _lint_add(
+            findings,
+            "warning",
+            "runtime.allowed_origins",
+            "production config has no allowed Origin list",
+            "Set runtime.allowed_origins when browser-based clients can reach MCPZT.",
+        )
+
+
+def _lint_auth(config: MCPZTConfig, findings: list[dict[str, str]]) -> None:
+    if config.auth.mode == "none":
+        severity = "error" if config.project.environment == "production" else "warning"
+        _lint_add(
+            findings,
+            severity,
+            "auth.mode",
+            "auth.mode is none",
+            "Use static_token, api_key, jwt or oidc before sharing MCPZT.",
+        )
+    inline_token = _auth_inline_token(config)
+    if inline_token:
+        severity = "error" if inline_token in {"change-me", "changeme", "secret"} else "warning"
+        _lint_add(
+            findings,
+            severity,
+            "auth.token",
+            "auth.token is inline",
+            "Use auth.token_env or an env:/file:/secret-manager reference.",
+        )
+    if config.project.environment == "production" and config.auth.trust_identity_headers:
+        _lint_add(
+            findings,
+            "warning",
+            "auth.trust_identity_headers",
+            "production trusts caller identity headers",
+            "Only enable this behind a trusted gateway that strips spoofed x-mcpzt-* headers.",
+        )
+    if config.project.environment == "production" and config.auth.mode in {"jwt", "oidc"}:
+        if not config.auth.required_scopes:
+            _lint_add(
+                findings,
+                "warning",
+                "auth.required_scopes",
+                "JWT/OIDC auth has no required scopes",
+                "Require at least one MCPZT-specific scope for production clients.",
+            )
+
+
+def _lint_servers(config: MCPZTConfig, findings: list[dict[str, str]]) -> None:
+    for server in config.servers:
+        for header, value in server.upstream_headers.items():
+            if _looks_sensitive_header(header) and not referenced_secret_sources(value):
+                _lint_add(
+                    findings,
+                    "warning",
+                    f"servers.{server.name}.upstream_headers.{header}",
+                    "sensitive upstream header is inline",
+                    "Use env:, ${VAR}, file: or a secret-manager reference.",
+                )
+        if (
+            config.project.environment == "production"
+            and server.transport == "http"
+            and server.upstream
+            and server.upstream.startswith("http://")
+            and "127.0.0.1" not in server.upstream
+            and "localhost" not in server.upstream
+        ):
+            _lint_add(
+                findings,
+                "warning",
+                f"servers.{server.name}.upstream",
+                "production upstream uses plain HTTP",
+                "Use HTTPS unless the upstream is same-host or protected by private networking.",
+            )
+
+
+def _lint_policies(config: MCPZTConfig, findings: list[dict[str, str]]) -> None:
+    for policy in config.policies:
+        if policy.effect == "allow" and _policy_match_is_empty(policy):
+            _lint_add(
+                findings,
+                "warning",
+                f"policies.{policy.id}",
+                "allow policy has an empty match block",
+                "Constrain allow policies by server, capability, action, risk or identity.",
+            )
+        if policy.effect == "allow" and policy.match.risk in {"high", "critical"}:
+            _lint_add(
+                findings,
+                "warning",
+                f"policies.{policy.id}",
+                f"allow policy directly matches {policy.match.risk} risk",
+                "Prefer require_approval or add narrow capability and validator constraints.",
+            )
+        if (
+            policy.effect == "allow"
+            and not policy.input
+            and not policy.validators
+            and not (policy.match.capability or policy.match.capabilities)
+            and policy.match.action
+        ):
+            _lint_add(
+                findings,
+                "warning",
+                f"policies.{policy.id}",
+                "semantic allow policy has no call-time constraints",
+                "Consider input.allowed_fields, input.required_fields or validators for tools/call.",
+            )
+
+
+def _lint_capability_mappings(config: MCPZTConfig, findings: list[dict[str, str]]) -> None:
+    for server_name, mappings in config.capability_mappings.items():
+        for kind, capabilities in [
+            ("tools", mappings.tools),
+            ("resources", mappings.resources),
+            ("prompts", mappings.prompts),
+        ]:
+            for capability, metadata in capabilities.items():
+                if not any(
+                    [
+                        metadata.action,
+                        metadata.risk,
+                        metadata.access,
+                        metadata.resource_type,
+                        metadata.tags,
+                        metadata.data_classification,
+                        metadata.owner,
+                    ]
+                ):
+                    _lint_add(
+                        findings,
+                        "warning",
+                        f"capability_mappings.{server_name}.{kind}.{capability}",
+                        "capability metadata is empty",
+                        "Add action, risk, access, owner or data classification metadata.",
+                    )
+
+
+def _lint_state(config: MCPZTConfig, findings: list[dict[str, str]]) -> None:
+    if config.approvals.default_ttl_seconds <= 0:
+        _lint_add(
+            findings,
+            "error",
+            "approvals.default_ttl_seconds",
+            "approval TTL is not positive",
+            "Use a positive TTL so approvals expire.",
+        )
+    elif config.approvals.default_ttl_seconds > 86_400:
+        _lint_add(
+            findings,
+            "warning",
+            "approvals.default_ttl_seconds",
+            "approval TTL is longer than one day",
+            "Use a shorter TTL for sensitive actions.",
+        )
+    if config.audit.destination == "stdout" and (
+        config.runtime.mode == "stdio" or any(server.transport == "stdio" for server in config.servers)
+    ):
+        _lint_add(
+            findings,
+            "error",
+            "audit.destination",
+            "stdio mode cannot write audit logs to stdout",
+            "Use audit.destination: file so stdout remains MCP protocol-only.",
+        )
+
+
+def _policy_match_is_empty(policy: PolicyConfig) -> bool:
+    match = policy.match
+    return not any(
+        [
+            match.server,
+            match.method,
+            match.capability_type,
+            match.capability,
+            match.capabilities,
+            match.action,
+            match.risk,
+            match.access,
+            match.resource_type,
+            match.tag,
+            match.tags,
+            match.data_classification,
+            match.environment,
+            match.user,
+            match.group,
+            match.role,
+            match.client_id,
+            match.agent_id,
+        ]
+    )
+
+
+def _lint_add(
+    findings: list[dict[str, str]],
+    severity: str,
+    rule: str,
+    message: str,
+    recommendation: str,
+) -> None:
+    findings.append(
+        {
+            "severity": severity,
+            "rule": rule,
+            "message": message,
+            "recommendation": recommendation,
+        }
+    )
+
+
+def _print_lint_table(findings: list[dict[str, str]]) -> None:
+    if not findings:
+        console.print("[green]No lint findings[/green]")
+        return
+    table = Table("Severity", "Rule", "Message", "Recommendation")
+    for finding in findings:
+        style = {"error": "red", "warning": "yellow", "info": "blue"}.get(
+            finding["severity"], "white"
+        )
+        table.add_row(
+            f"[{style}]{finding['severity']}[/{style}]",
+            finding["rule"],
+            finding["message"],
+            finding["recommendation"],
+        )
+    console.print(table)
 
 
 def _policy_context(

@@ -98,6 +98,8 @@ class ApprovalStore:
         )
 
     def _load(self) -> dict[str, ApprovalRequest]:
+        if not self.path.exists():
+            return {}
         with self._locked():
             return self._load_unlocked()
 

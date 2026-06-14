@@ -178,6 +178,65 @@ audit:
     assert "production dry_run is enabled" in result.stdout
 
 
+def test_doctor_strict_fails_on_warnings(tmp_path: Path) -> None:
+    config = tmp_path / "mcpzt.yaml"
+    config.write_text(
+        """
+project:
+  name: strict-test
+  environment: development
+runtime:
+  default_decision: deny
+auth:
+  mode: none
+servers:
+  - name: github
+    transport: http
+    upstream: http://localhost:3001/mcp
+policies: []
+audit:
+  destination: file
+  path: ./audit.jsonl
+""",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["doctor", "--strict", "--config", str(config)])
+
+    assert result.exit_code == 1
+    assert "auth.mode is none" in result.stdout
+
+
+def test_doctor_production_requires_production_environment(tmp_path: Path) -> None:
+    config = tmp_path / "mcpzt.yaml"
+    config.write_text(
+        """
+project:
+  name: production-check
+  environment: development
+runtime:
+  default_decision: deny
+auth:
+  mode: none
+servers:
+  - name: github
+    transport: http
+    upstream: http://localhost:3001/mcp
+policies: []
+audit:
+  destination: file
+  path: ./audit.jsonl
+""",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["doctor", "--production", "--config", str(config)])
+
+    assert result.exit_code == 1
+    assert "--production requires project.environment:" in result.stdout
+    assert "production, got development" in result.stdout
+
+
 def test_policy_explain_prints_selected_policy(tmp_path: Path) -> None:
     config = tmp_path / "mcpzt.yaml"
     config.write_text(
@@ -275,6 +334,91 @@ audit:
     assert rendered["mcpServers"]["mcpzt-postgres"]["command"] == "npx"
 
 
+def test_client_config_generates_claude_code_commands(tmp_path: Path) -> None:
+    config = tmp_path / "mcpzt.yaml"
+    config.write_text(
+        """
+project:
+  name: client-test
+  environment: development
+runtime:
+  default_decision: deny
+auth:
+  mode: none
+servers:
+  - name: github
+    transport: http
+    upstream: http://localhost:3001/mcp
+policies: []
+audit:
+  destination: file
+  path: ./audit.jsonl
+""",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "client",
+            "config",
+            "--config",
+            str(config),
+            "--base-url",
+            "https://mcpzt.example",
+            "--kind",
+            "claude-code",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == (
+        "claude mcp add mcpzt-github --transport http https://mcpzt.example/mcp/github"
+    )
+
+
+def test_config_lint_reports_warnings_as_json(tmp_path: Path) -> None:
+    config = tmp_path / "mcpzt.yaml"
+    config.write_text(
+        """
+project:
+  name: lint-test
+  environment: development
+runtime:
+  default_decision: allow
+auth:
+  mode: none
+servers:
+  - name: github
+    transport: http
+    upstream: http://localhost:3001/mcp
+policies:
+  - id: allow-everything
+    effect: allow
+    match: {}
+audit:
+  destination: file
+  path: ./audit.jsonl
+""",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["config", "lint", "--format", "json", "--config", str(config)])
+
+    assert result.exit_code == 0
+    findings = json.loads(result.stdout)
+    assert {finding["rule"] for finding in findings} >= {
+        "runtime.default_decision",
+        "auth.mode",
+        "policies.allow-everything",
+    }
+
+    strict = runner.invoke(
+        app, ["config", "lint", "--strict", "--format", "json", "--config", str(config)]
+    )
+    assert strict.exit_code == 1
+
+
 def test_approve_list_prints_full_approval_id(tmp_path: Path) -> None:
     config = tmp_path / "mcpzt.yaml"
     approvals = tmp_path / "approvals.json"
@@ -326,6 +470,109 @@ approvals:
 
     assert result.exit_code == 0
     assert approval_id in result.stdout
+
+
+def test_approve_list_outputs_json(tmp_path: Path) -> None:
+    config = tmp_path / "mcpzt.yaml"
+    approvals = tmp_path / "approvals.json"
+    approval_id = "appr_" + ("b" * 32)
+    config.write_text(
+        f"""
+project:
+  name: approvals-json-test
+  environment: development
+runtime:
+  default_decision: deny
+auth:
+  mode: none
+servers:
+  - name: github
+    transport: http
+    upstream: http://localhost:3001/mcp
+policies: []
+audit:
+  destination: file
+  path: ./audit.jsonl
+approvals:
+  path: {approvals}
+""",
+        encoding="utf-8",
+    )
+    approvals.write_text(
+        json.dumps(
+            {
+                approval_id: {
+                    "id": approval_id,
+                    "status": "pending",
+                    "server": "github",
+                    "capability": "github.merge_pull_request",
+                    "capability_type": "tool",
+                    "policy_id": "critical-needs-approval",
+                    "identity_subject": "ana@example.com",
+                    "arguments_hash": "abc123",
+                    "arguments_redacted": {"repo": "acme/api"},
+                    "created_at": "2026-06-14T09:00:00+00:00",
+                    "expires_at": "2026-06-14T09:15:00+00:00",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["approve", "list", "--format", "json", "--config", str(config)])
+
+    assert result.exit_code == 0
+    approvals_json = json.loads(result.stdout)
+    assert approvals_json[0]["id"] == approval_id
+    assert approvals_json[0]["status"] == "pending"
+
+
+def test_approve_list_empty_json_does_not_create_lock_file(tmp_path: Path) -> None:
+    config = tmp_path / "mcpzt.yaml"
+    approvals = tmp_path / "missing-approvals.json"
+    config.write_text(
+        f"""
+project:
+  name: approvals-empty-test
+  environment: development
+runtime:
+  default_decision: deny
+auth:
+  mode: none
+servers:
+  - name: github
+    transport: http
+    upstream: http://localhost:3001/mcp
+policies: []
+audit:
+  destination: file
+  path: ./audit.jsonl
+approvals:
+  path: {approvals}
+""",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["approve", "list", "--format", "json", "--config", str(config)])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == []
+    assert not approvals.exists()
+    assert not Path(f"{approvals}.lock").exists()
+
+
+def test_demo_writes_runnable_demo_files(tmp_path: Path) -> None:
+    output = tmp_path / "demo"
+
+    result = runner.invoke(app, ["demo", "--output", str(output)])
+
+    assert result.exit_code == 0
+    assert (output / "mcpzt.yaml").exists()
+    assert (output / "fake_mcp.py").exists()
+    assert (output / "demo_client.py").exists()
+    assert (output / "run_demo.sh").exists()
+    assert "demo.safe_echo" in (output / "mcpzt.yaml").read_text(encoding="utf-8")
+    assert 'cd "$DIR"' in (output / "run_demo.sh").read_text(encoding="utf-8")
 
 
 def test_scan_exits_two_for_high_findings(tmp_path: Path) -> None:
