@@ -4,7 +4,7 @@ from fnmatch import fnmatch
 from typing import Any
 
 from mcp_zero_trust_layer.capabilities.mapping import lookup_capability_metadata
-from mcp_zero_trust_layer.config.models import MCPZTConfig, PolicyConfig
+from mcp_zero_trust_layer.config.models import MCPZTConfig, PolicyConfig, PolicyMatch
 from mcp_zero_trust_layer.core import RequestContext
 from mcp_zero_trust_layer.policy.adapters import evaluate_external_policy
 from mcp_zero_trust_layer.policy.conditions import evaluate_conditions
@@ -33,48 +33,16 @@ class PolicyEngine:
                 dry_run=self.config.runtime.dry_run,
             )
 
-        matching = [
-            policy
-            for policy in self.config.policies
-            if self._matches(policy, context, metadata)
-            and evaluate_conditions(policy.when, context)
-        ]
-
+        matching = self._matching_policies(context, metadata)
         selected = self._select_by_precedence(matching)
-        if selected:
-            should_validate_request = (
-                selected.effect not in {"deny", "hide"} and context.method not in LIST_METHODS
-            )
-            if should_validate_request and selected.input:
-                validation = validate_input_policy(context.arguments, selected.input)
-                if not validation.passed:
-                    return self._validation_denied(
-                        selected, context, metadata, matching, validation.errors
-                    )
+        if selected is None:
+            return self._default_decision(metadata)
 
-            if should_validate_request and selected.validators:
-                validation = self.validator_engine.validate(selected.validators, context)
-                if not validation.passed:
-                    return self._validation_denied(
-                        selected, context, metadata, matching, validation.errors
-                    )
+        validation_errors = self._request_validation_errors(selected, context)
+        if validation_errors:
+            return self._validation_denied(selected, context, metadata, matching, validation_errors)
 
-            return PolicyDecision(
-                decision=selected.effect,
-                policy_id=selected.id,
-                reason=selected.reason or f"matched policy {selected.id}",
-                risk=metadata.risk if metadata else None,
-                approval_required=selected.effect == "require_approval",
-                dry_run=self.config.runtime.dry_run,
-                metadata={"matched_policies": [policy.id for policy in matching]},
-            )
-
-        return PolicyDecision(
-            decision=self.config.runtime.default_decision,
-            reason=f"default decision: {self.config.runtime.default_decision}",
-            risk=metadata.risk if metadata else None,
-            dry_run=self.config.runtime.dry_run,
-        )
+        return self._selected_decision(selected, metadata, matching)
 
     def explain(self, context: RequestContext) -> dict[str, Any]:
         metadata = lookup_capability_metadata(self.config, context)
@@ -122,64 +90,18 @@ class PolicyEngine:
             "policies": explanations,
         }
 
-    def _matches(
-        self, policy: PolicyConfig, context: RequestContext, metadata: object | None
-    ) -> bool:
-        match = policy.match
-        identity = context.identity
+    def _matching_policies(
+        self, context: RequestContext, metadata: object | None
+    ) -> list[PolicyConfig]:
+        return [
+            policy
+            for policy in self.config.policies
+            if self._matches(policy, context, metadata)
+            and evaluate_conditions(policy.when, context)
+        ]
 
-        if match.server and match.server != context.server:
-            return False
-        if match.method and not fnmatch(context.method, match.method):
-            return False
-        if match.capability_type and match.capability_type != context.capability_type:
-            return False
-        if match.capability and not self._matches_any(context.capability, [match.capability]):
-            return False
-        if match.capabilities and not self._matches_any(context.capability, match.capabilities):
-            return False
-        if match.environment and match.environment != context.environment:
-            return False
-        if match.user and match.user not in {identity.subject, identity.email}:
-            return False
-        if match.group and match.group not in identity.groups:
-            return False
-        if match.role and match.role not in identity.roles:
-            return False
-        if match.client_id and match.client_id != identity.client_id:
-            return False
-        if match.agent_id and match.agent_id != identity.agent_id:
-            return False
-
-        if metadata is not None:
-            if match.action and match.action != metadata.action:
-                return False
-            if match.risk and match.risk != metadata.risk:
-                return False
-            if match.access and match.access != metadata.access:
-                return False
-            if match.resource_type and match.resource_type != metadata.resource_type:
-                return False
-            if match.data_classification and match.data_classification != metadata.data_classification:
-                return False
-            if match.tag and match.tag not in metadata.tags:
-                return False
-            if match.tags and not set(match.tags).issubset(set(metadata.tags)):
-                return False
-        elif any(
-            [
-                match.action,
-                match.risk,
-                match.access,
-                match.resource_type,
-                match.data_classification,
-                match.tag,
-                match.tags,
-            ]
-        ):
-            return False
-
-        return True
+    def _matches(self, policy: PolicyConfig, context: RequestContext, metadata: object | None) -> bool:
+        return not self._match_failures(policy, context, metadata)
 
     def _match_report(
         self,
@@ -187,38 +109,42 @@ class PolicyEngine:
         context: RequestContext,
         metadata: object | None,
     ) -> dict[str, Any]:
-        failures: list[str] = []
+        failures = self._match_failures(policy, context, metadata)
+        return {"matched": not failures, "failures": failures}
+
+    def _match_failures(
+        self,
+        policy: PolicyConfig,
+        context: RequestContext,
+        metadata: object | None,
+    ) -> list[str]:
         match = policy.match
+        failures = self._request_match_failures(match, context)
+        failures.extend(self._metadata_match_failures(match, metadata))
+        return failures
+
+    def _request_match_failures(self, match: PolicyMatch, context: RequestContext) -> list[str]:
         identity = context.identity
+        failures = _compact_failures(
+            [
+                _exact_failure("server", context.server, match.server),
+                _method_failure(context.method, match.method),
+                _exact_failure("capability_type", context.capability_type, match.capability_type),
+                _pattern_failure("capability", context.capability, match.capability),
+                _patterns_failure(context.capability, match.capabilities),
+                _exact_failure("environment", context.environment, match.environment),
+                _identity_user_failure(match, identity),
+                _contains_failure("group", match.group, identity.groups),
+                _contains_failure("role", match.role, identity.roles),
+                _exact_failure("client_id", identity.client_id, match.client_id),
+                _exact_failure("agent_id", identity.agent_id, match.agent_id),
+            ]
+        )
+        return failures
 
-        if match.server and match.server != context.server:
-            failures.append(f"server {context.server!r} != {match.server!r}")
-        if match.method and not fnmatch(context.method, match.method):
-            failures.append(f"method {context.method!r} does not match {match.method!r}")
-        if match.capability_type and match.capability_type != context.capability_type:
-            failures.append(
-                f"capability_type {context.capability_type!r} != {match.capability_type!r}"
-            )
-        if match.capability and not self._matches_any(context.capability, [match.capability]):
-            failures.append(f"capability {context.capability!r} does not match {match.capability!r}")
-        if match.capabilities and not self._matches_any(context.capability, match.capabilities):
-            failures.append(
-                f"capability {context.capability!r} does not match configured capabilities"
-            )
-        if match.environment and match.environment != context.environment:
-            failures.append(f"environment {context.environment!r} != {match.environment!r}")
-        if match.user and match.user not in {identity.subject, identity.email}:
-            failures.append(f"user {identity.subject!r} or email {identity.email!r} did not match")
-        if match.group and match.group not in identity.groups:
-            failures.append(f"group {match.group!r} not present")
-        if match.role and match.role not in identity.roles:
-            failures.append(f"role {match.role!r} not present")
-        if match.client_id and match.client_id != identity.client_id:
-            failures.append(f"client_id {identity.client_id!r} != {match.client_id!r}")
-        if match.agent_id and match.agent_id != identity.agent_id:
-            failures.append(f"agent_id {identity.agent_id!r} != {match.agent_id!r}")
-
-        metadata_requirements = [
+    @staticmethod
+    def _metadata_requirements(match: PolicyMatch) -> list[object]:
+        return [
             match.action,
             match.risk,
             match.access,
@@ -227,33 +153,73 @@ class PolicyEngine:
             match.tag,
             match.tags,
         ]
-        if metadata is None and any(metadata_requirements):
-            failures.append("capability metadata is missing")
-        elif metadata is not None:
-            if match.action and match.action != metadata.action:
-                failures.append(f"action {metadata.action!r} != {match.action!r}")
-            if match.risk and match.risk != metadata.risk:
-                failures.append(f"risk {metadata.risk!r} != {match.risk!r}")
-            if match.access and match.access != metadata.access:
-                failures.append(f"access {metadata.access!r} != {match.access!r}")
-            if match.resource_type and match.resource_type != metadata.resource_type:
-                failures.append(
-                    f"resource_type {metadata.resource_type!r} != {match.resource_type!r}"
-                )
-            if (
-                match.data_classification
-                and match.data_classification != metadata.data_classification
-            ):
-                failures.append(
-                    "data_classification "
-                    f"{metadata.data_classification!r} != {match.data_classification!r}"
-                )
-            if match.tag and match.tag not in metadata.tags:
-                failures.append(f"tag {match.tag!r} not present")
-            if match.tags and not set(match.tags).issubset(set(metadata.tags)):
-                failures.append(f"tags {match.tags!r} are not all present")
 
-        return {"matched": not failures, "failures": failures}
+    def _metadata_match_failures(self, match: PolicyMatch, metadata: object | None) -> list[str]:
+        metadata_requirements = self._metadata_requirements(match)
+        if metadata is None and any(metadata_requirements):
+            return ["capability metadata is missing"]
+        if metadata is None:
+            return []
+        failures = _compact_failures(
+            [
+                _exact_failure("action", metadata.action, match.action),
+                _exact_failure("risk", metadata.risk, match.risk),
+                _exact_failure("access", metadata.access, match.access),
+                _exact_failure("resource_type", metadata.resource_type, match.resource_type),
+                _exact_failure(
+                    "data_classification",
+                    metadata.data_classification,
+                    match.data_classification,
+                ),
+                _contains_failure("tag", match.tag, metadata.tags),
+            ]
+        )
+        if match.tags and not set(match.tags).issubset(set(metadata.tags)):
+            failures.append(f"tags {match.tags!r} are not all present")
+        return failures
+
+    def _request_validation_errors(
+        self, selected: PolicyConfig, context: RequestContext
+    ) -> list[str] | None:
+        if not self._should_validate_request(selected, context):
+            return None
+        if selected.input:
+            validation = validate_input_policy(context.arguments, selected.input)
+            if not validation.passed:
+                return validation.errors
+        if selected.validators:
+            validation = self.validator_engine.validate(selected.validators, context)
+            if not validation.passed:
+                return validation.errors
+        return None
+
+    @staticmethod
+    def _should_validate_request(selected: PolicyConfig, context: RequestContext) -> bool:
+        return selected.effect not in {"deny", "hide"} and context.method not in LIST_METHODS
+
+    def _selected_decision(
+        self,
+        selected: PolicyConfig,
+        metadata: object | None,
+        matching: list[PolicyConfig],
+    ) -> PolicyDecision:
+        return PolicyDecision(
+            decision=selected.effect,
+            policy_id=selected.id,
+            reason=selected.reason or f"matched policy {selected.id}",
+            risk=metadata.risk if metadata else None,
+            approval_required=selected.effect == "require_approval",
+            dry_run=self.config.runtime.dry_run,
+            metadata={"matched_policies": [policy.id for policy in matching]},
+        )
+
+    def _default_decision(self, metadata: object | None) -> PolicyDecision:
+        return PolicyDecision(
+            decision=self.config.runtime.default_decision,
+            reason=f"default decision: {self.config.runtime.default_decision}",
+            risk=metadata.risk if metadata else None,
+            dry_run=self.config.runtime.dry_run,
+        )
 
     def _validation_denied(
         self,
@@ -278,12 +244,6 @@ class PolicyEngine:
         )
 
     @staticmethod
-    def _matches_any(value: str | None, patterns: list[str]) -> bool:
-        if value is None:
-            return False
-        return any(fnmatch(value, pattern) for pattern in patterns)
-
-    @staticmethod
     def _select_by_precedence(policies: list[PolicyConfig]) -> PolicyConfig | None:
         precedence = {
             "deny": 0,
@@ -297,4 +257,48 @@ class PolicyEngine:
         }
         if not policies:
             return None
-        return sorted(policies, key=lambda policy: precedence[policy.effect])[0]
+        return min(policies, key=lambda policy: precedence[policy.effect])
+
+
+def _compact_failures(failures: list[str | None]) -> list[str]:
+    return [failure for failure in failures if failure is not None]
+
+
+def _exact_failure(label: str, actual: object, expected: object | None) -> str | None:
+    if expected and expected != actual:
+        return f"{label} {actual!r} != {expected!r}"
+    return None
+
+
+def _method_failure(actual: str, expected: str | None) -> str | None:
+    if expected and not fnmatch(actual, expected):
+        return f"method {actual!r} does not match {expected!r}"
+    return None
+
+
+def _pattern_failure(label: str, actual: str | None, expected: str | None) -> str | None:
+    if expected and not _matches_pattern(actual, expected):
+        return f"{label} {actual!r} does not match {expected!r}"
+    return None
+
+
+def _patterns_failure(actual: str | None, patterns: list[str]) -> str | None:
+    if patterns and not any(_matches_pattern(actual, pattern) for pattern in patterns):
+        return f"capability {actual!r} does not match configured capabilities"
+    return None
+
+
+def _matches_pattern(actual: str | None, pattern: str) -> bool:
+    return actual is not None and fnmatch(actual, pattern)
+
+
+def _identity_user_failure(match: PolicyMatch, identity: object) -> str | None:
+    if match.user and match.user not in {identity.subject, identity.email}:
+        return f"user {identity.subject!r} or email {identity.email!r} did not match"
+    return None
+
+
+def _contains_failure(label: str, expected: object | None, values: list[object]) -> str | None:
+    if expected and expected not in values:
+        return f"{label} {expected!r} not present"
+    return None

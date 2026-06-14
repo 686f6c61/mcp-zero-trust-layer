@@ -275,6 +275,59 @@ audit:
     assert rendered["mcpServers"]["mcpzt-postgres"]["command"] == "npx"
 
 
+def test_approve_list_prints_full_approval_id(tmp_path: Path) -> None:
+    config = tmp_path / "mcpzt.yaml"
+    approvals = tmp_path / "approvals.json"
+    approval_id = "appr_" + ("a" * 32)
+    config.write_text(
+        f"""
+project:
+  name: approvals-test
+  environment: development
+runtime:
+  default_decision: deny
+auth:
+  mode: none
+servers:
+  - name: github
+    transport: http
+    upstream: http://localhost:3001/mcp
+policies: []
+audit:
+  destination: file
+  path: ./audit.jsonl
+approvals:
+  path: {approvals}
+""",
+        encoding="utf-8",
+    )
+    approvals.write_text(
+        json.dumps(
+            {
+                approval_id: {
+                    "id": approval_id,
+                    "status": "pending",
+                    "server": "github",
+                    "capability": "github.merge_pull_request",
+                    "capability_type": "tool",
+                    "policy_id": "critical-needs-approval",
+                    "identity_subject": "ana@example.com",
+                    "arguments_hash": "abc123",
+                    "arguments_redacted": {"repo": "acme/api"},
+                    "created_at": "2026-06-14T09:00:00+00:00",
+                    "expires_at": "2026-06-14T09:15:00+00:00",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["approve", "list", "--config", str(config)])
+
+    assert result.exit_code == 0
+    assert approval_id in result.stdout
+
+
 def test_scan_exits_two_for_high_findings(tmp_path: Path) -> None:
     config = tmp_path / "mcpzt.yaml"
     snapshot = tmp_path / "snapshot.json"

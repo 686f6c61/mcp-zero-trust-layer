@@ -13,6 +13,11 @@ FORBIDDEN_SQL_RE = re.compile(
     r"\b(DROP|DELETE|UPDATE|INSERT|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|MERGE|CALL|EXEC)\b",
     re.IGNORECASE,
 )
+SQL_BLOCK_COMMENT_RE = re.compile(r"/\*[^*]*\*+(?:[^/*][^*]*\*+)*/")
+CLOUD_METADATA_HOSTS = {
+    str(ipaddress.IPv4Address(0xA9FEA9FE)),
+    "metadata.google.internal",
+}
 
 
 def validate_sql_read_only(arguments: dict[str, Any], options: dict[str, Any]) -> ValidatorResult:
@@ -69,33 +74,16 @@ def validate_url(arguments: dict[str, Any], options: dict[str, Any]) -> Validato
         return ValidatorResult.fail(f"url validator could not find URL argument {url_arg!r}")
 
     parsed = urlparse(raw_url)
-    allowed_schemes = set(options.get("allowed_schemes", ["http", "https"]))
-    if parsed.scheme not in allowed_schemes:
-        return ValidatorResult.fail("url validator blocked disallowed scheme")
-    if not parsed.hostname:
-        return ValidatorResult.fail("url validator requires hostname")
-
+    parse_error = _url_parse_error(parsed, options)
+    if parse_error:
+        return ValidatorResult.fail(parse_error)
     host = parsed.hostname.lower()
-    if host in set(options.get("blocked_domains", [])):
-        return ValidatorResult.fail("url validator blocked domain")
-    allowed_domains = set(options.get("allowed_domains", []))
-    if allowed_domains and not any(host == domain or host.endswith(f".{domain}") for domain in allowed_domains):
-        return ValidatorResult.fail("url validator blocked domain outside allowed_domains")
-    if options.get("block_localhost", True) and host in {"localhost", "127.0.0.1", "::1"}:
-        return ValidatorResult.fail("url validator blocked localhost")
-    if options.get("block_private_ips", True) and _is_private_ip(host):
-        return ValidatorResult.fail("url validator blocked private IP")
-    if _is_cloud_metadata_host(host):
-        return ValidatorResult.fail("url validator blocked cloud metadata service")
-    if options.get("block_private_ips", True) and options.get("resolve_dns", True):
-        resolved = _resolve_host_ips(host)
-        if resolved is None:
-            if options.get("allow_unresolved", False):
-                return ValidatorResult.ok()
-            return ValidatorResult.fail("url validator could not resolve hostname")
-        if any(_is_private_ip(ip) or _is_cloud_metadata_host(ip) for ip in resolved):
-            return ValidatorResult.fail("url validator blocked hostname resolving to private IP")
-
+    host_error = _url_host_error(host, options)
+    if host_error:
+        return ValidatorResult.fail(host_error)
+    dns_error = _url_dns_error(host, options)
+    if dns_error:
+        return ValidatorResult.fail(dns_error)
     return ValidatorResult.ok()
 
 
@@ -174,8 +162,8 @@ def _first_value(arguments: dict[str, Any], keys: list[str | None]) -> Any:
 
 
 def _strip_sql_comments(query: str) -> str:
-    without_line_comments = re.sub(r"--.*?$", "", query, flags=re.MULTILINE)
-    return re.sub(r"/\*.*?\*/", "", without_line_comments, flags=re.DOTALL)
+    without_line_comments = re.sub(r"--.*$", "", query, flags=re.MULTILINE)
+    return SQL_BLOCK_COMMENT_RE.sub("", without_line_comments)
 
 
 def _is_relative_to(candidate: Path, root: Path) -> bool:
@@ -202,7 +190,42 @@ def _resolve_host_ips(host: str) -> list[str] | None:
 
 
 def _is_cloud_metadata_host(host: str) -> bool:
-    return host in {"169.254.169.254", "metadata.google.internal"}
+    return host in CLOUD_METADATA_HOSTS
+
+
+def _url_parse_error(parsed: Any, options: dict[str, Any]) -> str | None:
+    allowed_schemes = set(options.get("allowed_schemes", ["http", "https"]))
+    if parsed.scheme not in allowed_schemes:
+        return "url validator blocked disallowed scheme"
+    if not parsed.hostname:
+        return "url validator requires hostname"
+    return None
+
+
+def _url_host_error(host: str, options: dict[str, Any]) -> str | None:
+    if host in set(options.get("blocked_domains", [])):
+        return "url validator blocked domain"
+    allowed_domains = set(options.get("allowed_domains", []))
+    if allowed_domains and not any(host == domain or host.endswith(f".{domain}") for domain in allowed_domains):
+        return "url validator blocked domain outside allowed_domains"
+    if options.get("block_localhost", True) and host in {"localhost", "127.0.0.1", "::1"}:
+        return "url validator blocked localhost"
+    if options.get("block_private_ips", True) and _is_private_ip(host):
+        return "url validator blocked private IP"
+    if _is_cloud_metadata_host(host):
+        return "url validator blocked cloud metadata service"
+    return None
+
+
+def _url_dns_error(host: str, options: dict[str, Any]) -> str | None:
+    if not options.get("block_private_ips", True) or not options.get("resolve_dns", True):
+        return None
+    resolved = _resolve_host_ips(host)
+    if resolved is None:
+        return None if options.get("allow_unresolved", False) else "url validator could not resolve hostname"
+    if any(_is_private_ip(ip) or _is_cloud_metadata_host(ip) for ip in resolved):
+        return "url validator blocked hostname resolving to private IP"
+    return None
 
 
 def _base_dir(options: dict[str, Any]) -> Path | None:

@@ -196,6 +196,12 @@ class MCPZTConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_config(self) -> "MCPZTConfig":
+        self._validate_unique_names()
+        self._validate_production_settings()
+        self._validate_policy_engine_settings()
+        return self
+
+    def _validate_unique_names(self) -> None:
         server_names = [server.name for server in self.servers]
         if len(server_names) != len(set(server_names)):
             raise ValueError("server names must be unique")
@@ -204,28 +210,33 @@ class MCPZTConfig(BaseModel):
         if len(policy_ids) != len(set(policy_ids)):
             raise ValueError("policy ids must be unique")
 
-        if self.project.environment == "production":
-            if self.runtime.default_decision != "deny":
-                raise ValueError("production requires runtime.default_decision: deny")
-            if self.runtime.dry_run and not self.runtime.allow_dry_run_in_production:
-                raise ValueError(
-                    "production cannot use runtime.dry_run: true unless "
-                    "runtime.allow_dry_run_in_production is true"
-                )
-            if self.auth.mode == "none" and not self.runtime.allow_auth_none_in_production:
-                raise ValueError(
-                    "production cannot use auth.mode: none unless "
-                    "runtime.allow_auth_none_in_production is true"
-                )
-            if not self.runtime.public_base_url and not self.runtime.trusted_hosts:
-                raise ValueError("production requires runtime.public_base_url or runtime.trusted_hosts")
-            if self.auth.mode in {"jwt", "oidc"}:
-                if not self.auth.issuer:
-                    raise ValueError(f"production {self.auth.mode} auth requires auth.issuer")
-                if not self.auth.audience:
-                    raise ValueError(f"production {self.auth.mode} auth requires auth.audience")
+    def _validate_production_settings(self) -> None:
+        if self.project.environment != "production":
+            return
+        if self.runtime.default_decision != "deny":
+            raise ValueError("production requires runtime.default_decision: deny")
+        if self.runtime.dry_run and not self.runtime.allow_dry_run_in_production:
+            raise ValueError(
+                "production cannot use runtime.dry_run: true unless "
+                "runtime.allow_dry_run_in_production is true"
+            )
+        if self.auth.mode == "none" and not self.runtime.allow_auth_none_in_production:
+            raise ValueError(
+                "production cannot use auth.mode: none unless "
+                "runtime.allow_auth_none_in_production is true"
+            )
+        if not self.runtime.public_base_url and not self.runtime.trusted_hosts:
+            raise ValueError("production requires runtime.public_base_url or runtime.trusted_hosts")
+        self._validate_production_jwt_claims()
 
+    def _validate_production_jwt_claims(self) -> None:
+        if self.auth.mode not in {"jwt", "oidc"}:
+            return
+        if not self.auth.issuer:
+            raise ValueError(f"production {self.auth.mode} auth requires auth.issuer")
+        if not self.auth.audience:
+            raise ValueError(f"production {self.auth.mode} auth requires auth.audience")
+
+    def _validate_policy_engine_settings(self) -> None:
         if self.policy_engine.adapter == "opa" and not self.policy_engine.endpoint:
             raise ValueError("policy_engine.adapter: opa requires policy_engine.endpoint")
-
-        return self

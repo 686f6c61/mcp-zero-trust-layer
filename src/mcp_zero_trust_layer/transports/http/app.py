@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse, Response
@@ -69,10 +69,10 @@ def create_app_from_config(config: MCPZTConfig, default_server: str | None = Non
     @app.post("/mcp")
     async def post_mcp(
         request: Request,
-        authorization: str | None = Header(default=None),
-        x_mcpzt_subject: str | None = Header(default=None),
-        x_mcpzt_client_id: str | None = Header(default=None),
-        x_mcpzt_agent_id: str | None = Header(default=None),
+        authorization: Annotated[str | None, Header()] = None,
+        x_mcpzt_subject: Annotated[str | None, Header()] = None,
+        x_mcpzt_client_id: Annotated[str | None, Header()] = None,
+        x_mcpzt_agent_id: Annotated[str | None, Header()] = None,
     ) -> Response:
         return await _handle_post(
             request,
@@ -90,10 +90,10 @@ def create_app_from_config(config: MCPZTConfig, default_server: str | None = Non
     async def post_mcp_server(
         server_name: str,
         request: Request,
-        authorization: str | None = Header(default=None),
-        x_mcpzt_subject: str | None = Header(default=None),
-        x_mcpzt_client_id: str | None = Header(default=None),
-        x_mcpzt_agent_id: str | None = Header(default=None),
+        authorization: Annotated[str | None, Header()] = None,
+        x_mcpzt_subject: Annotated[str | None, Header()] = None,
+        x_mcpzt_client_id: Annotated[str | None, Header()] = None,
+        x_mcpzt_agent_id: Annotated[str | None, Header()] = None,
     ) -> Response:
         return await _handle_post(
             request,
@@ -135,7 +135,7 @@ async def _handle_post(
     if not isinstance(payload, dict):
         return JSONResponse(error_response(None, -32600, "Invalid Request"), status_code=400)
 
-    headers = {key: value for key, value in request.headers.items()}
+    headers = dict(request.headers.items())
     if authorization is not None:
         headers["authorization"] = authorization
     if x_mcpzt_subject is not None:

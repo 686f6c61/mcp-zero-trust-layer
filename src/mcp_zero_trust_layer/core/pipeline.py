@@ -44,6 +44,8 @@ SAFE_NOTIFICATION_METHODS = {
     "notifications/prompts/list_changed",
 }
 
+UPSTREAM_NO_RESPONSE = "Upstream returned no response"
+
 
 class MCPPipeline:
     def __init__(
@@ -108,78 +110,127 @@ class MCPPipeline:
         decision = self.policy_engine.evaluate(context)
 
         if method in LIST_RESULT_KEYS:
-            if decision.decision in {"deny", "hide"} and decision.policy_id and not decision.dry_run:
-                self._log_decision(context, decision, upstream_called=False)
-                return self._deny_response(request_id, decision)
-            upstream_response = self.upstream.send(server, message, headers=headers)
-            self._log_decision(context, decision, upstream_called=True)
-            if upstream_response is None:
-                return error_response(request_id, -32603, "Upstream returned no response")
-            if self.config.runtime.dry_run:
-                return upstream_response
-            return self._filter_list_response(server.name, method, upstream_response, identity)
+            return self._handle_list_request(
+                server, message, identity, headers, context, decision, request_id
+            )
 
         if method in CALL_METHODS:
-            if decision.decision in {"deny", "hide"} and not decision.dry_run:
-                self._log_decision(context, decision, upstream_called=False)
-                if method == "tools/call" and decision.validation_errors:
-                    return {
-                        "jsonrpc": "2.0",
-                        "id": request_id,
-                        "result": {
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": "; ".join(decision.validation_errors),
-                                }
-                            ],
-                            "isError": True,
-                        },
-                    }
-                return self._deny_response(request_id, decision)
-            if decision.decision == "require_approval" and not decision.dry_run:
-                approval_id = _extract_approval_id(message)
-                if approval_id and decision.policy_id and self.approvals.is_valid_for(
-                    approval_id, context, decision.policy_id
-                ):
-                    message = _strip_approval_id(message)
-                    upstream_response = self.upstream.send(server, message, headers=headers)
-                    self._log_decision(context, decision, upstream_called=True)
-                    if upstream_response is None:
-                        return error_response(request_id, -32603, "Upstream returned no response")
-                    return self._enforce_output(context, upstream_response, request_id)
-                approval = self.approvals.create(context, decision.policy_id or "unknown")
-                self._log_decision(context, decision, upstream_called=False)
-                self.audit.log_approval("created", approval.model_dump(mode="json"))
-                self.approval_notifier.notify("created", approval.model_dump(mode="json"))
-                return error_response(
-                    request_id,
-                    -32010,
-                    "Approval required",
-                    {
-                        "decision": decision.decision,
-                        "policy_id": decision.policy_id,
-                        "reason": decision.reason,
-                        "approval_id": approval.id,
-                        "expires_at": approval.expires_at.isoformat()
-                        if approval.expires_at
-                        else None,
-                    },
-                )
-            upstream_response = self.upstream.send(server, message, headers=headers)
-            self._log_decision(context, decision, upstream_called=True)
-            if upstream_response is None:
-                return error_response(request_id, -32603, "Upstream returned no response")
-            return self._enforce_output(context, upstream_response, request_id)
+            return self._handle_call_request(server, message, headers, context, decision, request_id)
 
+        return self._handle_other_request(server, message, headers, context, decision, request_id)
+
+    def _handle_list_request(
+        self,
+        server: ServerConfig,
+        message: dict[str, Any],
+        identity: Identity,
+        headers: dict[str, str] | None,
+        context: RequestContext,
+        decision: PolicyDecision,
+        request_id: Any,
+    ) -> dict[str, Any]:
+        method = message["method"]
+        if decision.decision in {"deny", "hide"} and decision.policy_id and not decision.dry_run:
+            self._log_decision(context, decision, upstream_called=False)
+            return self._deny_response(request_id, decision)
+        upstream_response = self.upstream.send(server, message, headers=headers)
+        self._log_decision(context, decision, upstream_called=True)
+        if upstream_response is None:
+            return _upstream_no_response(request_id)
+        if self.config.runtime.dry_run:
+            return upstream_response
+        return self._filter_list_response(server.name, method, upstream_response, identity)
+
+    def _handle_call_request(
+        self,
+        server: ServerConfig,
+        message: dict[str, Any],
+        headers: dict[str, str] | None,
+        context: RequestContext,
+        decision: PolicyDecision,
+        request_id: Any,
+    ) -> dict[str, Any]:
+        if decision.decision in {"deny", "hide"} and not decision.dry_run:
+            self._log_decision(context, decision, upstream_called=False)
+            if message["method"] == "tools/call" and decision.validation_errors:
+                return _tool_validation_error_response(request_id, decision.validation_errors)
+            return self._deny_response(request_id, decision)
+        if decision.decision == "require_approval" and not decision.dry_run:
+            return self._handle_approval_required(server, message, headers, context, decision, request_id)
+        return self._send_and_enforce_output(server, message, headers, context, decision, request_id)
+
+    def _handle_approval_required(
+        self,
+        server: ServerConfig,
+        message: dict[str, Any],
+        headers: dict[str, str] | None,
+        context: RequestContext,
+        decision: PolicyDecision,
+        request_id: Any,
+    ) -> dict[str, Any]:
+        approval_id = _extract_approval_id(message)
+        if approval_id and decision.policy_id and self.approvals.is_valid_for(
+            approval_id, context, decision.policy_id
+        ):
+            approved_message = _strip_approval_id(message)
+            return self._send_and_enforce_output(
+                server, approved_message, headers, context, decision, request_id
+            )
+        return self._create_approval_response(context, decision, request_id)
+
+    def _create_approval_response(
+        self,
+        context: RequestContext,
+        decision: PolicyDecision,
+        request_id: Any,
+    ) -> dict[str, Any]:
+        approval = self.approvals.create(context, decision.policy_id or "unknown")
+        self._log_decision(context, decision, upstream_called=False)
+        self.audit.log_approval("created", approval.model_dump(mode="json"))
+        self.approval_notifier.notify("created", approval.model_dump(mode="json"))
+        return error_response(
+            request_id,
+            -32010,
+            "Approval required",
+            {
+                "decision": decision.decision,
+                "policy_id": decision.policy_id,
+                "reason": decision.reason,
+                "approval_id": approval.id,
+                "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
+            },
+        )
+
+    def _handle_other_request(
+        self,
+        server: ServerConfig,
+        message: dict[str, Any],
+        headers: dict[str, str] | None,
+        context: RequestContext,
+        decision: PolicyDecision,
+        request_id: Any,
+    ) -> dict[str, Any]:
         if decision.decision in {"deny", "hide"} and not decision.dry_run:
             self._log_decision(context, decision, upstream_called=False)
             return self._deny_response(request_id, decision)
         upstream_response = self.upstream.send(server, message, headers=headers)
         self._log_decision(context, decision, upstream_called=True)
-        return upstream_response or error_response(
-            request_id, -32603, "Upstream returned no response"
-        )
+        return upstream_response or _upstream_no_response(request_id)
+
+    def _send_and_enforce_output(
+        self,
+        server: ServerConfig,
+        message: dict[str, Any],
+        headers: dict[str, str] | None,
+        context: RequestContext,
+        decision: PolicyDecision,
+        request_id: Any,
+    ) -> dict[str, Any]:
+        upstream_response = self.upstream.send(server, message, headers=headers)
+        self._log_decision(context, decision, upstream_called=True)
+        if upstream_response is None:
+            return _upstream_no_response(request_id)
+        return self._enforce_output(context, upstream_response, request_id)
 
     def _handle_notification(
         self,
@@ -399,3 +450,23 @@ def _strip_approval_id(message: dict[str, Any]) -> dict[str, Any]:
         params["arguments"] = arguments
     copied["params"] = params
     return copied
+
+
+def _upstream_no_response(request_id: Any) -> dict[str, Any]:
+    return error_response(request_id, -32603, UPSTREAM_NO_RESPONSE)
+
+
+def _tool_validation_error_response(request_id: Any, validation_errors: list[str]) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "result": {
+            "content": [
+                {
+                    "type": "text",
+                    "text": "; ".join(validation_errors),
+                }
+            ],
+            "isError": True,
+        },
+    }

@@ -17,6 +17,7 @@ spec:
         app.kubernetes.io/name: {{ include "mcpzt.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: mcpzt
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -57,7 +58,14 @@ spec:
               drop:
                 - ALL
           resources:
-{{ toYaml .Values.resources | indent 12 }}
+            requests:
+              cpu: {{ .Values.resources.requests.cpu | quote }}
+              memory: {{ .Values.resources.requests.memory | quote }}
+              ephemeral-storage: {{ default "64Mi" (index .Values.resources.requests "ephemeral-storage") | quote }}
+            limits:
+              cpu: {{ .Values.resources.limits.cpu | quote }}
+              memory: {{ .Values.resources.limits.memory | quote }}
+              ephemeral-storage: {{ default "256Mi" (index .Values.resources.limits "ephemeral-storage") | quote }}
           volumeMounts:
             - name: config
               mountPath: /etc/mcpzt

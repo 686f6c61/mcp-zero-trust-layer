@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-import subprocess
+# Stdio MCP upstreams require subprocess; command is an argv list and shell is disabled.
+import subprocess  # nosec B404
 import sys
 from typing import Any, TextIO
 
@@ -14,13 +15,14 @@ class StdioProcessUpstream:
         if not server.command:
             raise JSONRPCError(-32603, "stdio upstream command is not configured")
         self.server = server
-        self.process = subprocess.Popen(
+        self.process = subprocess.Popen(  # nosec B603
             server.command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            shell=False,
         )
 
     def send(
@@ -30,6 +32,7 @@ class StdioProcessUpstream:
         *,
         headers: dict[str, str] | None = None,
     ) -> dict[str, Any] | None:
+        _ = server, headers
         if self.process.stdin is None or self.process.stdout is None:
             raise JSONRPCError(-32603, "stdio upstream pipes are not available")
         if self.process.poll() is not None:

@@ -4,11 +4,14 @@ from importlib import resources
 from pathlib import Path
 
 PACK_PACKAGE = "mcp_zero_trust_layer.packs"
+PACK_SUFFIX = ".yaml"
 
 
 def list_packs() -> list[str]:
     root = resources.files(PACK_PACKAGE)
-    return sorted(path.name.removesuffix(".yaml") for path in root.iterdir() if path.name.endswith(".yaml"))
+    return sorted(
+        path.name.removesuffix(PACK_SUFFIX) for path in root.iterdir() if path.name.endswith(PACK_SUFFIX)
+    )
 
 
 def read_pack(name: str) -> str:
@@ -24,9 +27,8 @@ def add_pack(name: str, output: str | Path) -> Path:
 
 
 def _filename(name: str) -> str:
-    normalized = name.removesuffix(".yaml")
+    normalized = name.removesuffix(PACK_SUFFIX)
     available = set(list_packs())
     if normalized not in available:
         raise KeyError(name)
-    return f"{normalized}.yaml"
-
+    return f"{normalized}{PACK_SUFFIX}"

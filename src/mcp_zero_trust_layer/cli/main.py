@@ -55,6 +55,7 @@ app.add_typer(pack_app, name="pack")
 app.add_typer(client_app, name="client")
 
 console = Console()
+DEFAULT_CONFIG_PATH = Path("mcpzt.yaml")
 
 
 DEFAULT_CONFIG = """project:
@@ -124,8 +125,8 @@ def version() -> None:
 
 @app.command()
 def init(
-    path: Annotated[Path, typer.Option("--config", "-c", help="Config file to create.")] = Path(
-        "mcpzt.yaml"
+    path: Annotated[Path, typer.Option("--config", "-c", help="Config file to create.")] = (
+        DEFAULT_CONFIG_PATH
     ),
     force: Annotated[bool, typer.Option(help="Overwrite existing config.")] = False,
 ) -> None:
@@ -138,7 +139,7 @@ def init(
 
 @config_app.command("validate")
 def config_validate(
-    path: Annotated[Path, typer.Option("--config", "-c")] = Path("mcpzt.yaml"),
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
 ) -> None:
     """Validate configuration without starting a transport."""
     try:
@@ -178,7 +179,7 @@ def policy_test(
     arguments: Annotated[
         str, typer.Option("--arguments", "-a", help="JSON object with call arguments.")
     ] = "{}",
-    config_path: Annotated[Path, typer.Option("--config", "-c")] = Path("mcpzt.yaml"),
+    config_path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
     subject: Annotated[str, typer.Option(help="Identity subject for the simulation.")] = "local",
     client_id: Annotated[str | None, typer.Option(help="Client id for the simulation.")] = None,
     agent_id: Annotated[str | None, typer.Option(help="Agent id for the simulation.")] = None,
@@ -214,7 +215,7 @@ def policy_explain(
     arguments: Annotated[
         str, typer.Option("--arguments", "-a", help="JSON object with call arguments.")
     ] = "{}",
-    config_path: Annotated[Path, typer.Option("--config", "-c")] = Path("mcpzt.yaml"),
+    config_path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
     subject: Annotated[str, typer.Option(help="Identity subject for the simulation.")] = "local",
     client_id: Annotated[str | None, typer.Option(help="Client id for the simulation.")] = None,
     agent_id: Annotated[str | None, typer.Option(help="Agent id for the simulation.")] = None,
@@ -240,7 +241,7 @@ def policy_explain(
 
 @app.command()
 def run(
-    path: Annotated[Path, typer.Option("--config", "-c")] = Path("mcpzt.yaml"),
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
     host: Annotated[str, typer.Option(help="Host for the HTTP proxy.")] = "127.0.0.1",
     port: Annotated[int, typer.Option(help="Port for the HTTP proxy.")] = 8765,
     server: Annotated[str | None, typer.Option(help="Default logical server for /mcp.")] = None,
@@ -259,7 +260,7 @@ def run(
 
 @app.command()
 def wrap(
-    path: Annotated[Path, typer.Option("--config", "-c")] = Path("mcpzt.yaml"),
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
     server: Annotated[str | None, typer.Option(help="Logical stdio server to wrap.")] = None,
 ) -> None:
     """Wrap a stdio MCP server behind policy enforcement."""
@@ -276,7 +277,7 @@ def wrap(
 @app.command()
 def discover(
     server: Annotated[str, typer.Option(help="Logical server to discover.")],
-    path: Annotated[Path, typer.Option("--config", "-c")] = Path("mcpzt.yaml"),
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
     output: Annotated[Path | None, typer.Option(help="Snapshot output path.")] = None,
 ) -> None:
     """Discover upstream capabilities."""
@@ -297,7 +298,7 @@ def discover(
 @app.command()
 def diff(
     server: Annotated[str, typer.Option(help="Logical server to diff.")],
-    path: Annotated[Path, typer.Option("--config", "-c")] = Path("mcpzt.yaml"),
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
     snapshot: Annotated[Path | None, typer.Option(help="Previous snapshot path.")] = None,
 ) -> None:
     """Compare upstream capabilities against a snapshot."""
@@ -319,7 +320,7 @@ def diff(
 
 @app.command()
 def scan(
-    path: Annotated[Path, typer.Option("--config", "-c")] = Path("mcpzt.yaml"),
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
     server: Annotated[
         str | None,
         typer.Option(help="Logical server to discover live when --snapshot is not provided."),
@@ -353,7 +354,7 @@ def scan(
 
 @audit_app.command("tail")
 def audit_tail(
-    path: Annotated[Path, typer.Option("--config", "-c")] = Path("mcpzt.yaml"),
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
     lines: Annotated[int, typer.Option("--lines", "-n", help="Number of events to show.")] = 20,
 ) -> None:
     """Tail audit events."""
@@ -372,7 +373,7 @@ def audit_tail(
 
 @audit_app.command("verify")
 def audit_verify(
-    path: Annotated[Path, typer.Option("--config", "-c")] = Path("mcpzt.yaml"),
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
     audit_path: Annotated[
         Path | None,
         typer.Option("--audit-path", help="Override the configured audit JSONL path."),
@@ -394,12 +395,19 @@ def audit_verify(
 
 @approve_app.command("list")
 def approve_list(
-    path: Annotated[Path, typer.Option("--config", "-c")] = Path("mcpzt.yaml"),
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
 ) -> None:
     """List pending approvals."""
     config = load_config(path)
     approvals = ApprovalStore(config.approvals).list()
-    table = Table("ID", "Status", "Server", "Capability", "Policy", "Subject", "Expires")
+    table = Table(expand=False)
+    table.add_column("ID", no_wrap=True, overflow="ignore")
+    table.add_column("Status", no_wrap=True)
+    table.add_column("Server", no_wrap=True)
+    table.add_column("Capability", overflow="fold")
+    table.add_column("Policy", overflow="fold")
+    table.add_column("Subject", overflow="fold")
+    table.add_column("Expires", no_wrap=True)
     for approval in approvals:
         table.add_row(
             approval.id,
@@ -410,13 +418,13 @@ def approve_list(
             approval.identity_subject,
             approval.expires_at.isoformat() if approval.expires_at else "",
         )
-    console.print(table)
+    Console(width=180).print(table)
 
 
 @approve_app.command("show")
 def approve_show(
     approval_id: str,
-    path: Annotated[Path, typer.Option("--config", "-c")] = Path("mcpzt.yaml"),
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
 ) -> None:
     """Show one approval request."""
     config = load_config(path)
@@ -430,7 +438,7 @@ def approve_show(
 @approve_app.command("allow")
 def approve_allow(
     approval_id: str,
-    path: Annotated[Path, typer.Option("--config", "-c")] = Path("mcpzt.yaml"),
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
     decided_by: Annotated[
         str | None,
         typer.Option("--by", help="Approver identity to store in the decision."),
@@ -447,7 +455,7 @@ def approve_allow(
 @approve_app.command("deny")
 def approve_deny(
     approval_id: str,
-    path: Annotated[Path, typer.Option("--config", "-c")] = Path("mcpzt.yaml"),
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
     decided_by: Annotated[
         str | None,
         typer.Option("--by", help="Approver identity to store in the decision."),
@@ -499,7 +507,7 @@ def client_config(
             help="claude-desktop, cursor, vscode, claude-code, or json.",
         ),
     ] = "claude-desktop",
-    path: Annotated[Path, typer.Option("--config", "-c")] = Path("mcpzt.yaml"),
+    path: Annotated[Path, typer.Option("--config", "-c")] = DEFAULT_CONFIG_PATH,
     base_url: Annotated[
         str,
         typer.Option("--base-url", help="Public base URL where MCPZT is reachable."),
@@ -666,6 +674,14 @@ def _upstream_for(server: ServerConfig) -> UpstreamClient:
 
 
 def _doctor_config(checks: list[tuple[str, str, str]], config: MCPZTConfig) -> None:
+    _doctor_runtime(checks, config)
+    _doctor_auth(checks, config)
+    for server in config.servers:
+        _doctor_server(checks, server)
+    _doctor_state_paths(checks, config)
+
+
+def _doctor_runtime(checks: list[tuple[str, str, str]], config: MCPZTConfig) -> None:
     if config.runtime.default_decision == "deny":
         _doctor_add(checks, "OK", "runtime", "default_decision is deny")
     else:
@@ -697,65 +713,82 @@ def _doctor_config(checks: list[tuple[str, str, str]], config: MCPZTConfig) -> N
             f"{len(config.runtime.allowed_origins)} allowed origin(s)",
         )
 
+
+def _doctor_auth(checks: list[tuple[str, str, str]], config: MCPZTConfig) -> None:
     if config.auth.mode == "none":
         _doctor_add(checks, "WARN", "auth", "auth.mode is none")
     elif config.auth.mode in {"static_token", "api_key"}:
-        missing_auth_refs = _doctor_secret_refs(checks, "auth", _auth_secret_refs(config))
-        secret_source_issues = _doctor_secret_sources(checks, "auth", _auth_secret_sources(config))
-        if not _auth_has_token(config):
-            _doctor_add(checks, "FAIL", "auth", f"{config.auth.mode} requires auth.token")
-        elif _auth_inline_token(config) in {"change-me", "changeme", "secret"}:
-            _doctor_add(checks, "FAIL", "auth", "replace placeholder auth.token")
-        else:
-            detail = f"{config.auth.mode} configured"
-            if config.auth.token_env:
-                detail += " from environment"
-            elif _auth_secret_sources(config):
-                detail += " from secret reference"
-            elif config.auth.token:
-                detail += "; prefer auth.token_env for real secrets"
-                _doctor_add(checks, "WARN", "auth", "inline auth.token should not be committed")
-            if not missing_auth_refs and not secret_source_issues:
-                _doctor_add(checks, "OK", "auth", detail)
+        _doctor_static_or_api_key_auth(checks, config)
     elif config.auth.mode == "jwt":
-        missing_auth_refs = _doctor_secret_refs(checks, "auth", _auth_secret_refs(config))
-        secret_source_issues = _doctor_secret_sources(checks, "auth", _auth_secret_sources(config))
-        if not _auth_has_token(config) and not config.auth.jwks_url:
-            _doctor_add(checks, "FAIL", "auth", "jwt requires auth.token or auth.jwks_url")
-        elif not missing_auth_refs and not secret_source_issues:
-            _doctor_add(checks, "OK", "auth", "jwt validation configured")
+        _doctor_jwt_auth(checks, config)
     elif config.auth.mode == "oidc":
-        if not config.auth.issuer and not config.auth.jwks_url:
-            _doctor_add(checks, "FAIL", "auth", "oidc requires auth.issuer or auth.jwks_url")
-        else:
-            _doctor_add(checks, "OK", "auth", "oidc validation configured")
+        _doctor_oidc_auth(checks, config)
 
-    for server in config.servers:
-        _doctor_server(checks, server)
 
+def _doctor_static_or_api_key_auth(
+    checks: list[tuple[str, str, str]], config: MCPZTConfig
+) -> None:
+    missing_auth_refs = _doctor_secret_refs(checks, "auth", _auth_secret_refs(config))
+    secret_source_issues = _doctor_secret_sources(checks, "auth", _auth_secret_sources(config))
+    if not _auth_has_token(config):
+        _doctor_add(checks, "FAIL", "auth", f"{config.auth.mode} requires auth.token")
+        return
+    if _auth_inline_token(config) in {"change-me", "changeme", "secret"}:
+        _doctor_add(checks, "FAIL", "auth", "replace placeholder auth.token")
+        return
+    detail = _auth_detail(checks, config)
+    if not missing_auth_refs and not secret_source_issues:
+        _doctor_add(checks, "OK", "auth", detail)
+
+
+def _doctor_jwt_auth(checks: list[tuple[str, str, str]], config: MCPZTConfig) -> None:
+    missing_auth_refs = _doctor_secret_refs(checks, "auth", _auth_secret_refs(config))
+    secret_source_issues = _doctor_secret_sources(checks, "auth", _auth_secret_sources(config))
+    if not _auth_has_token(config) and not config.auth.jwks_url:
+        _doctor_add(checks, "FAIL", "auth", "jwt requires auth.token or auth.jwks_url")
+    elif not missing_auth_refs and not secret_source_issues:
+        _doctor_add(checks, "OK", "auth", "jwt validation configured")
+
+
+def _doctor_oidc_auth(checks: list[tuple[str, str, str]], config: MCPZTConfig) -> None:
+    if not config.auth.issuer and not config.auth.jwks_url:
+        _doctor_add(checks, "FAIL", "auth", "oidc requires auth.issuer or auth.jwks_url")
+    else:
+        _doctor_add(checks, "OK", "auth", "oidc validation configured")
+
+
+def _auth_detail(checks: list[tuple[str, str, str]], config: MCPZTConfig) -> str:
+    detail = f"{config.auth.mode} configured"
+    if config.auth.token_env:
+        return detail + " from environment"
+    if _auth_secret_sources(config):
+        return detail + " from secret reference"
+    if config.auth.token:
+        _doctor_add(checks, "WARN", "auth", "inline auth.token should not be committed")
+        return detail + "; prefer auth.token_env for real secrets"
+    return detail
+
+
+def _doctor_state_paths(checks: list[tuple[str, str, str]], config: MCPZTConfig) -> None:
     if config.audit.destination == "stdout":
         if config.runtime.mode == "stdio" or any(server.transport == "stdio" for server in config.servers):
             _doctor_add(checks, "FAIL", "audit", "stdio mode cannot use audit.destination stdout")
         else:
             _doctor_add(checks, "OK", "audit", "audit writes to stdout")
     else:
-        audit_path = Path(config.audit.path)
-        parent = audit_path.parent
-        if parent.exists():
-            _doctor_add(checks, "OK", "audit", f"audit path parent exists: {parent}")
-        else:
-            _doctor_add(checks, "WARN", "audit", f"audit path parent will be created: {parent}")
+        _doctor_parent_path(checks, "audit", Path(config.audit.path), "audit path parent")
 
-    approvals_parent = Path(config.approvals.path).parent
-    if approvals_parent.exists():
-        _doctor_add(checks, "OK", "approvals", f"approval store parent exists: {approvals_parent}")
+    _doctor_parent_path(checks, "approvals", Path(config.approvals.path), "approval store parent")
+
+
+def _doctor_parent_path(
+    checks: list[tuple[str, str, str]], check: str, path: Path, label: str
+) -> None:
+    parent = path.parent
+    if parent.exists():
+        _doctor_add(checks, "OK", check, f"{label} exists: {parent}")
     else:
-        _doctor_add(
-            checks,
-            "WARN",
-            "approvals",
-            f"approval store parent will be created: {approvals_parent}",
-        )
+        _doctor_add(checks, "WARN", check, f"{label} will be created: {parent}")
 
 
 def _doctor_server(checks: list[tuple[str, str, str]], server: ServerConfig) -> None:

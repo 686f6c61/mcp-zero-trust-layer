@@ -15,7 +15,7 @@ from mcp_zero_trust_layer.policy import PolicyDecision
 
 SECRET_KEY_RE = re.compile(r"(password|token|api[_-]?key|secret|authorization|cookie)", re.I)
 SECRET_VALUE_RES = [
-    re.compile(r"Bearer\s+[A-Za-z0-9._\-]+", re.I),
+    re.compile(r"Bearer\s+[A-Z0-9_.-]+", re.I),
     re.compile(r"sk-[A-Za-z0-9]{20,}"),
 ]
 

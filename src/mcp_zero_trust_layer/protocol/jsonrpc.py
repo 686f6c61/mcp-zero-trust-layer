@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+INVALID_REQUEST = "Invalid Request"
+
 
 class JSONRPCError(Exception):
     def __init__(self, code: int, message: str, data: Any | None = None):
@@ -43,11 +45,11 @@ def error_response(
 
 def require_jsonrpc_message(message: Any) -> dict[str, Any]:
     if not isinstance(message, dict):
-        raise JSONRPCError(-32600, "Invalid Request", {"reason": "message must be an object"})
+        raise JSONRPCError(-32600, INVALID_REQUEST, {"reason": "message must be an object"})
     if message.get("jsonrpc") != "2.0":
-        raise JSONRPCError(-32600, "Invalid Request", {"reason": "jsonrpc must be '2.0'"})
+        raise JSONRPCError(-32600, INVALID_REQUEST, {"reason": "jsonrpc must be '2.0'"})
     if "id" in message and message["id"] is None:
-        raise JSONRPCError(-32600, "Invalid Request", {"reason": "id must not be null"})
+        raise JSONRPCError(-32600, INVALID_REQUEST, {"reason": "id must not be null"})
     if "method" not in message and "id" not in message:
-        raise JSONRPCError(-32600, "Invalid Request", {"reason": "not a JSON-RPC message"})
+        raise JSONRPCError(-32600, INVALID_REQUEST, {"reason": "not a JSON-RPC message"})
     return message

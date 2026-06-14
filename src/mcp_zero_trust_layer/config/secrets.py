@@ -4,7 +4,8 @@ import json
 import os
 import re
 import shutil
-import subprocess
+# Secret-provider integrations require subprocess; arguments are allowlisted and shell is disabled.
+import subprocess  # nosec B404
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -13,7 +14,16 @@ class SecretError(ValueError):
     pass
 
 
-ENV_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+AWS_SM_REF_PREFIX = "aws-sm://"
+VAULT_REF_PREFIX = "vault://"
+SECRET_SOURCE_PREFIXES = [
+    ("file:", "file"),
+    ("op://", "op"),
+    (AWS_SM_REF_PREFIX, "aws-sm"),
+    (VAULT_REF_PREFIX, "vault"),
+]
+
+ENV_REF_RE = re.compile(r"\$\{([A-Za-z_]\w*)\}", re.ASCII)
 
 
 def resolve_secret_value(value: str, *, field: str) -> str:
@@ -24,9 +34,9 @@ def resolve_secret_value(value: str, *, field: str) -> str:
         return _read_file_secret(value, field=field)
     if value.startswith("op://"):
         return _read_command_secret(["op", "read", value], provider="1Password", field=field)
-    if value.startswith("aws-sm://"):
+    if value.startswith(AWS_SM_REF_PREFIX):
         return _read_aws_secret(value, field=field)
-    if value.startswith("vault://"):
+    if value.startswith(VAULT_REF_PREFIX):
         return _read_vault_secret(value, field=field)
 
     def replace(match: re.Match[str]) -> str:
@@ -48,12 +58,7 @@ def referenced_secret_sources(value: str | None) -> list[tuple[str, str]]:
     if not value:
         return []
     refs = [("env", name) for name in referenced_env_vars(value)]
-    for prefix, kind in [
-        ("file:", "file"),
-        ("op://", "op"),
-        ("aws-sm://", "aws-sm"),
-        ("vault://", "vault"),
-    ]:
+    for prefix, kind in SECRET_SOURCE_PREFIXES:
         if value.startswith(prefix):
             refs.append((kind, value))
     return refs
@@ -95,7 +100,7 @@ def _read_file_secret(reference: str, *, field: str) -> str:
 
 
 def _read_aws_secret(reference: str, *, field: str) -> str:
-    secret_id, json_field = _split_reference(reference.removeprefix("aws-sm://"))
+    secret_id, json_field = _split_reference(reference.removeprefix(AWS_SM_REF_PREFIX))
     output = _read_command_secret(
         [
             "aws",
@@ -115,7 +120,7 @@ def _read_aws_secret(reference: str, *, field: str) -> str:
 
 
 def _read_vault_secret(reference: str, *, field: str) -> str:
-    secret_path, secret_field = _split_reference(reference.removeprefix("vault://"))
+    secret_path, secret_field = _split_reference(reference.removeprefix(VAULT_REF_PREFIX))
     return _read_command_secret(
         ["vault", "kv", "get", f"-field={secret_field or 'value'}", secret_path],
         provider="Vault",
@@ -125,9 +130,18 @@ def _read_vault_secret(reference: str, *, field: str) -> str:
 
 def _read_command_secret(command: list[str], *, provider: str, field: str) -> str:
     try:
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        result = subprocess.run(  # nosec B603
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            shell=False,
+        )
     except FileNotFoundError as exc:
         raise SecretError(f"{field} references {provider}, but its CLI is not installed") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise SecretError(f"{field} timed out while reading secret from {provider}") from exc
     except subprocess.CalledProcessError as exc:
         raise SecretError(f"{field} could not read secret from {provider}") from exc
     value = result.stdout.strip()

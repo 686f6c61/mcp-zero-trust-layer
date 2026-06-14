@@ -58,102 +58,141 @@ def scan_snapshot(config: MCPZTConfig, snapshot: CapabilitySnapshot) -> ScanRepo
     engine = PolicyEngine(config)
     findings: list[ScanFinding] = []
     for item in snapshot.tools:
-        name = item.get("name")
-        if not isinstance(name, str):
-            continue
-        context = RequestContext(
-            server=snapshot.server,
-            method="tools/call",
-            capability_type="tool",
-            capability=name,
-            identity=Identity(subject="scanner", environment=config.project.environment),
-            environment=config.project.environment,
-        )
-        metadata = lookup_capability_metadata(config, context)
-        decision = engine.evaluate(context)
-        text = _searchable_text(item)
-
-        if metadata is None:
-            findings.append(
-                ScanFinding(
-                    severity="medium",
-                    rule_id="missing-capability-metadata",
-                    server=snapshot.server,
-                    capability_type="tool",
-                    capability=name,
-                    message="tool has no capability_mappings metadata",
-                )
-            )
-
-        matched_patterns = [pattern.pattern for pattern in SUSPICIOUS_TEXT if pattern.search(text)]
-        if matched_patterns:
-            findings.append(
-                ScanFinding(
-                    severity="high",
-                    rule_id="suspicious-capability-text",
-                    server=snapshot.server,
-                    capability_type="tool",
-                    capability=name,
-                    message="tool description or schema contains suspicious security-sensitive text",
-                    evidence={"patterns": matched_patterns[:5]},
-                )
-            )
-
-        if DANGEROUS_TOOL_NAME.search(name):
-            if decision.decision == "allow":
-                findings.append(
-                    ScanFinding(
-                        severity="high",
-                        rule_id="dangerous-tool-allowed",
-                        server=snapshot.server,
-                        capability_type="tool",
-                        capability=name,
-                        message="dangerous-looking tool is directly allowed without approval",
-                        evidence={"policy_id": decision.policy_id, "decision": decision.decision},
-                    )
-                )
-            elif decision.decision == "require_approval":
-                findings.append(
-                    ScanFinding(
-                        severity="low",
-                        rule_id="dangerous-tool-requires-approval",
-                        server=snapshot.server,
-                        capability_type="tool",
-                        capability=name,
-                        message="dangerous-looking tool is gated by approval",
-                        evidence={"policy_id": decision.policy_id},
-                    )
-                )
+        findings.extend(_scan_tool(config, snapshot, engine, item))
 
     for item in snapshot.resources:
-        uri = item.get("uri")
-        if isinstance(uri, str) and _contains_suspicious_text(item):
-            findings.append(
-                ScanFinding(
-                    severity="medium",
-                    rule_id="suspicious-resource-text",
-                    server=snapshot.server,
-                    capability_type="resource",
-                    capability=uri,
-                    message="resource metadata contains suspicious security-sensitive text",
-                )
-            )
+        findings.extend(_scan_resource(snapshot, item))
 
     for item in snapshot.prompts:
-        name = item.get("name")
-        if isinstance(name, str) and _contains_suspicious_text(item):
-            findings.append(
-                ScanFinding(
-                    severity="high",
-                    rule_id="suspicious-prompt-text",
-                    server=snapshot.server,
-                    capability_type="prompt",
-                    capability=name,
-                    message="prompt metadata contains suspicious instruction text",
-                )
-            )
+        findings.extend(_scan_prompt(snapshot, item))
 
     return ScanReport(server=snapshot.server, findings=findings)
+
+
+def _scan_tool(
+    config: MCPZTConfig,
+    snapshot: CapabilitySnapshot,
+    engine: PolicyEngine,
+    item: dict[str, Any],
+) -> list[ScanFinding]:
+    name = item.get("name")
+    if not isinstance(name, str):
+        return []
+    context = _tool_context(config, snapshot.server, name)
+    findings = _tool_metadata_findings(config, snapshot.server, name, context)
+    findings.extend(_tool_text_findings(snapshot.server, name, item))
+    findings.extend(_dangerous_tool_findings(snapshot.server, name, engine.evaluate(context)))
+    return findings
+
+
+def _tool_context(config: MCPZTConfig, server: str, name: str) -> RequestContext:
+    return RequestContext(
+        server=server,
+        method="tools/call",
+        capability_type="tool",
+        capability=name,
+        identity=Identity(subject="scanner", environment=config.project.environment),
+        environment=config.project.environment,
+    )
+
+
+def _tool_metadata_findings(
+    config: MCPZTConfig,
+    server: str,
+    name: str,
+    context: RequestContext,
+) -> list[ScanFinding]:
+    if lookup_capability_metadata(config, context) is not None:
+        return []
+    return [
+        ScanFinding(
+            severity="medium",
+            rule_id="missing-capability-metadata",
+            server=server,
+            capability_type="tool",
+            capability=name,
+            message="tool has no capability_mappings metadata",
+        )
+    ]
+
+
+def _tool_text_findings(server: str, name: str, item: dict[str, Any]) -> list[ScanFinding]:
+    matched_patterns = [pattern.pattern for pattern in SUSPICIOUS_TEXT if pattern.search(_searchable_text(item))]
+    if not matched_patterns:
+        return []
+    return [
+        ScanFinding(
+            severity="high",
+            rule_id="suspicious-capability-text",
+            server=server,
+            capability_type="tool",
+            capability=name,
+            message="tool description or schema contains suspicious security-sensitive text",
+            evidence={"patterns": matched_patterns[:5]},
+        )
+    ]
+
+
+def _dangerous_tool_findings(server: str, name: str, decision: Any) -> list[ScanFinding]:
+    if not DANGEROUS_TOOL_NAME.search(name):
+        return []
+    if decision.decision == "allow":
+        return [
+            ScanFinding(
+                severity="high",
+                rule_id="dangerous-tool-allowed",
+                server=server,
+                capability_type="tool",
+                capability=name,
+                message="dangerous-looking tool is directly allowed without approval",
+                evidence={"policy_id": decision.policy_id, "decision": decision.decision},
+            )
+        ]
+    if decision.decision == "require_approval":
+        return [
+            ScanFinding(
+                severity="low",
+                rule_id="dangerous-tool-requires-approval",
+                server=server,
+                capability_type="tool",
+                capability=name,
+                message="dangerous-looking tool is gated by approval",
+                evidence={"policy_id": decision.policy_id},
+            )
+        ]
+    return []
+
+
+def _scan_resource(snapshot: CapabilitySnapshot, item: dict[str, Any]) -> list[ScanFinding]:
+    uri = item.get("uri")
+    if not isinstance(uri, str) or not _contains_suspicious_text(item):
+        return []
+    return [
+        ScanFinding(
+            severity="medium",
+            rule_id="suspicious-resource-text",
+            server=snapshot.server,
+            capability_type="resource",
+            capability=uri,
+            message="resource metadata contains suspicious security-sensitive text",
+        )
+    ]
+
+
+def _scan_prompt(snapshot: CapabilitySnapshot, item: dict[str, Any]) -> list[ScanFinding]:
+    name = item.get("name")
+    if not isinstance(name, str) or not _contains_suspicious_text(item):
+        return []
+    return [
+        ScanFinding(
+            severity="high",
+            rule_id="suspicious-prompt-text",
+            server=snapshot.server,
+            capability_type="prompt",
+            capability=name,
+            message="prompt metadata contains suspicious instruction text",
+        )
+    ]
 
 
 def _contains_suspicious_text(item: dict[str, Any]) -> bool:

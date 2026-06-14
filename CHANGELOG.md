@@ -4,6 +4,29 @@ All notable changes to MCP Zero Trust Layer will be documented here.
 
 The project follows SemVer during the `0.x` line with the caveat that minor versions may still change configuration shape before `1.0`.
 
+## 0.1.2 - 2026-06-14
+
+### Changed
+
+- Refactored policy evaluation, request routing, capability scanning, input validation and CLI diagnostics into smaller internal units with clearer responsibilities.
+- Kept policy matching and policy explanation behavior aligned by sharing the same match-failure logic.
+- Improved the approval review CLI so `mcpzt approve list` prints full approval IDs that can be copied directly into `mcpzt approve allow` or `mcpzt approve deny`.
+- Simplified Docker image construction while preserving the non-root runtime user.
+- Added reusable static-analysis project configuration for local and CI quality gates.
+
+### Tests
+
+- Added regression coverage to keep approval IDs fully visible in `mcpzt approve list`.
+- Current release validation suite: 85 tests passing.
+
+### Security
+
+- Hardened the Helm deployment defaults by disabling automatic service account token mounting for the application pod.
+- Added explicit ephemeral-storage requests and limits to the Helm chart defaults.
+- Made subprocess execution for stdio MCP upstreams and secret-provider CLIs explicit with `shell=False`.
+- Added a timeout when reading secrets through external secret-provider CLIs so secret resolution fails closed instead of hanging indefinitely.
+- Kept URL validation protections for private, loopback, link-local and cloud metadata destinations while making the validator internals easier to review.
+
 ## 0.1.1 - 2026-06-13
 
 ### Fixed
