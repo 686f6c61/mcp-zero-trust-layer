@@ -4,7 +4,7 @@ All notable changes to MCP Zero Trust Layer will be documented here.
 
 The project follows SemVer during the `0.x` line with the caveat that minor versions may still change configuration shape before `1.0`.
 
-## 0.1.3 - Unreleased
+## 0.1.3 - 2026-06-14
 
 ### Added
 
