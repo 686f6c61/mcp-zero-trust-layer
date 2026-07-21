@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import yaml
 import pytest
+import yaml
 
 from mcp_zero_trust_layer.client_import import import_client_config
 

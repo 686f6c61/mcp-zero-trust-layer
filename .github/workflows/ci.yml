@@ -30,8 +30,11 @@ jobs:
       - name: Lint
         run: ruff check .
 
+      - name: Type check
+        run: mypy
+
       - name: Test
-        run: python -m pytest
+        run: python -m pytest --cov=mcp_zero_trust_layer --cov-report=term-missing --cov-fail-under=100
 
   build:
     name: Build package

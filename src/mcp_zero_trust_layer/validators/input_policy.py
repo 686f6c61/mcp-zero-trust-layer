@@ -6,7 +6,6 @@ from typing import Any
 from mcp_zero_trust_layer.config.models import InputPolicy
 from mcp_zero_trust_layer.validators.models import ValidatorResult
 
-
 MISSING = object()
 
 
@@ -24,8 +23,38 @@ def validate_input_policy(arguments: dict[str, Any], policy: InputPolicy) -> Val
 def _allowed_field_errors(arguments: dict[str, Any], policy: InputPolicy) -> list[str]:
     if not policy.allowed_fields:
         return []
-    allowed_top_level = {field.split(".", 1)[0] for field in policy.allowed_fields}
-    return [f"field {field!r} is not allowed" for field in arguments if field not in allowed_top_level]
+    allowed_paths = [tuple(field.split(".")) for field in policy.allowed_fields]
+    errors: list[str] = []
+    _collect_disallowed(arguments, (), allowed_paths, errors)
+    return errors
+
+
+def _collect_disallowed(
+    value: Any,
+    prefix: tuple[str, ...],
+    allowed_paths: list[tuple[str, ...]],
+    errors: list[str],
+) -> None:
+    if not isinstance(value, dict):
+        return
+    for key, item in value.items():
+        path = prefix + (key,)
+        if _is_allowed_leaf(path, allowed_paths):
+            continue  # this path or an ancestor is explicitly allowed; subtree is fine
+        if _is_allowed_ancestor(path, allowed_paths):
+            _collect_disallowed(item, path, allowed_paths, errors)  # descend to check children
+            continue
+        errors.append(f"field {'.'.join(path)!r} is not allowed")
+
+
+def _is_allowed_leaf(path: tuple[str, ...], allowed_paths: list[tuple[str, ...]]) -> bool:
+    # path equals an allowed path or is a descendant of one.
+    return any(len(path) >= len(allowed) and path[: len(allowed)] == allowed for allowed in allowed_paths)
+
+
+def _is_allowed_ancestor(path: tuple[str, ...], allowed_paths: list[tuple[str, ...]]) -> bool:
+    # path is a strict prefix of an allowed path (a parent of an allowed leaf).
+    return any(len(path) < len(allowed) and allowed[: len(path)] == path for allowed in allowed_paths)
 
 
 def _required_field_errors(arguments: dict[str, Any], policy: InputPolicy) -> list[str]:

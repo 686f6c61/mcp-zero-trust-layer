@@ -37,6 +37,22 @@ def _context() -> RequestContext:
     )
 
 
+def _token_config(tmp_path: Path) -> MCPZTConfig:
+    return MCPZTConfig.model_validate(
+        {
+            "project": {"name": "ui-test", "environment": "development"},
+            "runtime": {"default_decision": "deny"},
+            "auth": {"mode": "static_token", "token": "s3cret", "trust_identity_headers": True},
+            "servers": [
+                {"name": "github", "transport": "http", "upstream": "http://localhost:3001/mcp"}
+            ],
+            "policies": [],
+            "audit": {"destination": "file", "path": str(tmp_path / "audit.jsonl")},
+            "approvals": {"path": str(tmp_path / "approvals.sqlite3"), "backend": "sqlite"},
+        }
+    )
+
+
 def test_approvals_ui_lists_and_approves_request(tmp_path: Path) -> None:
     config = _config(tmp_path)
     approval = ApprovalStore(config.approvals).create(_context(), "merge-needs-approval")
@@ -46,7 +62,7 @@ def test_approvals_ui_lists_and_approves_request(tmp_path: Path) -> None:
     listed = client.get("/api/approvals")
     approved = client.post(
         f"/api/approvals/{approval.id}/allow",
-        json={"decided_by": "reviewer", "comment": "ship it"},
+        json={"comment": "ship it"},
     )
 
     assert index.status_code == 200
@@ -54,4 +70,50 @@ def test_approvals_ui_lists_and_approves_request(tmp_path: Path) -> None:
     assert listed.json()[0]["id"] == approval.id
     assert approved.status_code == 200
     assert approved.json()["status"] == "approved"
-    assert ApprovalStore(config.approvals).get(approval.id).decided_by == "reviewer"  # type: ignore[union-attr]
+    # decided_by is derived from the authenticated identity, never the request body.
+    assert ApprovalStore(config.approvals).get(approval.id).decided_by != "attacker"
+
+
+def test_approvals_ui_rejects_body_supplied_decided_by(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    approval = ApprovalStore(config.approvals).create(_context(), "merge-needs-approval")
+    client = TestClient(create_approvals_app(config))
+
+    client.post(
+        f"/api/approvals/{approval.id}/allow",
+        json={"decided_by": "security-team"},
+    )
+
+    assert ApprovalStore(config.approvals).get(approval.id).decided_by != "security-team"
+
+
+def test_approvals_ui_requires_authentication_when_configured(tmp_path: Path) -> None:
+    config = _token_config(tmp_path)
+    approval = ApprovalStore(config.approvals).create(_context(), "merge-needs-approval")
+    client = TestClient(create_approvals_app(config))
+
+    unauth = client.post(f"/api/approvals/{approval.id}/allow", json={})
+    assert unauth.status_code == 401
+
+    ok = client.post(
+        f"/api/approvals/{approval.id}/allow",
+        json={},
+        headers={"authorization": "Bearer s3cret", "x-mcpzt-subject": "reviewer"},
+    )
+    assert ok.status_code == 200
+    assert ApprovalStore(config.approvals).get(approval.id).decided_by == "reviewer"
+
+
+def test_approvals_ui_enforces_separation_of_duties(tmp_path: Path) -> None:
+    config = _token_config(tmp_path)
+    approval = ApprovalStore(config.approvals).create(_context(), "merge-needs-approval")
+    client = TestClient(create_approvals_app(config))
+
+    # The same subject that triggered the call ("ana") must not approve it.
+    response = client.post(
+        f"/api/approvals/{approval.id}/allow",
+        json={},
+        headers={"authorization": "Bearer s3cret", "x-mcpzt-subject": "ana"},
+    )
+    assert response.status_code == 403
+    assert ApprovalStore(config.approvals).get(approval.id).status == "pending"

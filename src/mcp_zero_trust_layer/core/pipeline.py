@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
-from mcp_zero_trust_layer.audit import AuditLogger
 from mcp_zero_trust_layer.approvals import ApprovalNotifier, ApprovalStore
+from mcp_zero_trust_layer.audit import AuditLogger
 from mcp_zero_trust_layer.capabilities.filtering import filter_capabilities
 from mcp_zero_trust_layer.config.models import MCPZTConfig, PolicyConfig, ServerConfig
 from mcp_zero_trust_layer.core.context import RequestContext
@@ -169,7 +169,7 @@ class MCPPipeline:
         request_id: Any,
     ) -> dict[str, Any]:
         approval_id = _extract_approval_id(message)
-        if approval_id and decision.policy_id and self.approvals.is_valid_for(
+        if approval_id and decision.policy_id and self.approvals.consume_if_valid(
             approval_id, context, decision.policy_id
         ):
             approved_message = _strip_approval_id(message)
@@ -344,7 +344,8 @@ class MCPPipeline:
         identity: Identity,
     ) -> RequestContext:
         method = message.get("method", "")
-        params = message.get("params") if isinstance(message.get("params"), dict) else {}
+        raw_params = message.get("params")
+        params: dict[str, Any] = raw_params if isinstance(raw_params, dict) else {}
         capability_type = "method"
         capability = method
         arguments: dict[str, Any] = {}

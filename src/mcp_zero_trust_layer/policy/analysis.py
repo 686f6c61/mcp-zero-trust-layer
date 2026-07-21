@@ -14,12 +14,12 @@ from mcp_zero_trust_layer.policy.engine import PolicyEngine
 CapabilityType = Literal["tool", "resource", "prompt"]
 AnalysisSeverity = Literal["info", "low", "medium", "high", "critical"]
 
-METHOD_BY_TYPE: dict[CapabilityType, str] = {
+METHOD_BY_TYPE: dict[str, str] = {
     "tool": "tools/call",
     "resource": "resources/read",
     "prompt": "prompts/get",
 }
-LIST_METHOD_BY_TYPE: dict[CapabilityType, str] = {
+LIST_METHOD_BY_TYPE: dict[str, str] = {
     "tool": "tools/list",
     "resource": "resources/list",
     "prompt": "prompts/list",

@@ -4,6 +4,47 @@ All notable changes to MCP Zero Trust Layer will be documented here.
 
 The project follows SemVer during the `0.x` line with the caveat that minor versions may still change configuration shape before `1.0`.
 
+## 0.3.0 - 2026-07-21
+
+This release is a security-hardening pass with full remediation of an internal audit, plus a large test and typing investment. Several changes affect behavior of approvals and the approval UI; review the Security section before upgrading a live deployment.
+
+### Added
+
+- Added `output.redact_patterns` for value-level output redaction. Regular expressions are applied to string values at any depth, so secrets and PII embedded inside MCP tool-result text (for example an email inside `content[].text`) can be redacted where there is no discrete field to target.
+- Added `audit.hmac_key` and `audit.hmac_key_env` for a keyed audit hash chain. When set, each event hash is an HMAC-SHA256 so an attacker with write access to the log cannot recompute a valid chain after tampering. `mcpzt audit verify` uses the configured key automatically.
+- Added a monotonic `sequence` number to audit events to help detect gaps.
+- Added `approvals.require_separation_of_duties` (default `true`): the identity that triggered a call cannot approve its own request.
+- Added `mypy` type checking as a required CI gate, with `types-PyYAML` and a project mypy configuration.
+
+### Changed
+
+- Approvals are now single use. A valid retry is executed and the approval is atomically marked `consumed` in the same locked step; the same `approval_id` can no longer be replayed within its TTL.
+- The approval UI (`mcpzt approve serve`) now authenticates every decision through the project `auth` configuration and derives `decided_by` from the authenticated identity instead of the request body.
+- Approval status transitions are validated: terminal decisions (`denied`, `expired`, `consumed`) are immutable and cannot be flipped back to `approved`.
+- The approval binding now includes `method` in addition to server, capability, identity and argument hash.
+- The HTTP runtime offloads the synchronous pipeline to a worker thread so a slow upstream no longer stalls the event loop for other requests.
+- Upstream MCP sessions are cached per downstream session key instead of per server, so sessions are not shared across distinct downstream clients, and the cache is guarded by a lock.
+- Hardened ruff configuration (import sorting, bugbear, pyupgrade, comprehension and simplification rules) and enforced 100% coverage in CI with `--cov-fail-under=100`.
+- Retyped the policy engine to use `CapabilityMetadata | None` and `Identity` instead of `object`, and resolved typing issues across the package.
+- `mcpzt demo` now selects free host ports for the fake upstream and gateway instead of hard-coding `3001`/`8765`, the fake upstream fails loudly if it cannot bind, and the runner polls health instead of sleeping. This avoids the demo silently colliding with an already-listening service.
+
+### Security
+
+- Hardened the `sql_read_only` validator against parser-differential bypasses: it now rejects stacked statements, MySQL executable comments (`/*! ... */`), a broader destructive-keyword list, and host-reaching functions such as `load_extension`, `COPY ... TO PROGRAM` and `ATTACH`.
+- Made the `filesystem_path` validator fail safer: broader sensitive-path defaults (`~/.ssh`, `~/.aws`, `/proc`, `/sys`, `/root`) and case-insensitive comparison so `/ETC` is caught on case-insensitive filesystems.
+- Hardened URL/SSRF checks: decimal, hex and octal IP encodings are normalized and blocked, and reserved, multicast and CGNAT ranges are treated as private.
+- Validators now fail closed on unexpected errors, DNS resolution has a timeout, and invalid regex patterns no longer raise.
+- The audit log is written with `0600` permissions and appended under an exclusive lock so concurrent writers cannot fork the hash chain.
+- Broadened audit and approval redaction to cover more key names and secret-shaped values (`AKIA` access keys, JWTs, PEM private keys, base64 bearer tokens).
+- `input` allowed-fields validation is now recursive, so an allowed parent no longer permits arbitrary nested keys.
+- Approval webhook delivery failures are always logged to stderr, so an alerting-channel outage is never silent.
+- Capability-condition evaluation and stdio upstream reads are bounded, avoiding hangs on a stuck upstream.
+
+### Tests
+
+- Raised test coverage to 100% (498 tests) and enforced it in CI.
+- Added regression coverage for approval single-use replay, approval UI authentication and separation of duties, the SQL and filesystem validator bypasses, keyed audit chains, value-pattern output redaction and recursive input allowlists.
+
 ## 0.2.0 - 2026-06-14
 
 ### Added

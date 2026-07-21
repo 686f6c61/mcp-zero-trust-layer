@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import html
 import json
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import parse_qs
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
+from mcp_zero_trust_layer.approvals.models import ApprovalRequest
 from mcp_zero_trust_layer.approvals.store import ApprovalStore
 from mcp_zero_trust_layer.config.models import MCPZTConfig
+from mcp_zero_trust_layer.identity import AuthError, AuthResolver
 
-APPROVAL_NOT_FOUND_RESPONSE = {404: {"description": "Approval not found"}}
+ApprovalStatus = Literal["pending", "approved", "denied", "expired", "consumed"]
+APPROVAL_NOT_FOUND_RESPONSE: dict[int | str, dict[str, Any]] = {
+    404: {"description": "Approval not found"}
+}
 
 
 def create_approvals_app(config: MCPZTConfig) -> FastAPI:
@@ -22,6 +27,44 @@ def create_approvals_app(config: MCPZTConfig) -> FastAPI:
         openapi_url=None,
     )
     store = ApprovalStore(config.approvals)
+    auth = AuthResolver(config.auth)
+
+    def _reviewer(request: Request) -> str:
+        headers = dict(request.headers.items())
+        try:
+            identity = auth.resolve_http_identity(
+                headers=headers,
+                source_ip=request.client.host if request.client else None,
+                fallback_subject="approval-ui",
+                environment=config.project.environment,
+            )
+        except AuthError as exc:
+            raise HTTPException(status_code=401, detail=exc.message) from exc
+        return identity.subject
+
+    def _decide(
+        approval_id: str, status: ApprovalStatus, reviewer: str, comment: str | None
+    ) -> ApprovalRequest:
+        approval = store.get(approval_id)
+        if approval is None:
+            raise HTTPException(status_code=404, detail="approval not found")
+        if (
+            config.approvals.require_separation_of_duties
+            and status == "approved"
+            and reviewer == approval.identity_subject
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="separation of duties: the requester cannot approve their own call",
+            )
+        try:
+            return store.set_status(
+                approval_id, status, decided_by=reviewer, decision_comment=comment
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="approval not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> HTMLResponse:
@@ -33,22 +76,30 @@ def create_approvals_app(config: MCPZTConfig) -> FastAPI:
 
     @app.post("/api/approvals/{approval_id}/allow", responses=APPROVAL_NOT_FOUND_RESPONSE)
     async def api_allow(approval_id: str, request: Request) -> JSONResponse:
-        approval = _set_status_from_request(store, approval_id, "approved", await _payload(request))
+        reviewer = _reviewer(request)
+        payload = await _payload(request)
+        approval = _decide(approval_id, "approved", reviewer, _optional_str(payload.get("comment")))
         return JSONResponse(approval.model_dump(mode="json"))
 
     @app.post("/api/approvals/{approval_id}/deny", responses=APPROVAL_NOT_FOUND_RESPONSE)
     async def api_deny(approval_id: str, request: Request) -> JSONResponse:
-        approval = _set_status_from_request(store, approval_id, "denied", await _payload(request))
+        reviewer = _reviewer(request)
+        payload = await _payload(request)
+        approval = _decide(approval_id, "denied", reviewer, _optional_str(payload.get("comment")))
         return JSONResponse(approval.model_dump(mode="json"))
 
     @app.post("/approvals/{approval_id}/allow", responses=APPROVAL_NOT_FOUND_RESPONSE)
     async def web_allow(approval_id: str, request: Request) -> RedirectResponse:
-        _set_status_from_request(store, approval_id, "approved", await _payload(request))
+        reviewer = _reviewer(request)
+        payload = await _payload(request)
+        _decide(approval_id, "approved", reviewer, _optional_str(payload.get("comment")))
         return RedirectResponse("/", status_code=303)
 
     @app.post("/approvals/{approval_id}/deny", responses=APPROVAL_NOT_FOUND_RESPONSE)
     async def web_deny(approval_id: str, request: Request) -> RedirectResponse:
-        _set_status_from_request(store, approval_id, "denied", await _payload(request))
+        reviewer = _reviewer(request)
+        payload = await _payload(request)
+        _decide(approval_id, "denied", reviewer, _optional_str(payload.get("comment")))
         return RedirectResponse("/", status_code=303)
 
     return app
@@ -64,23 +115,6 @@ async def _payload(request: Request) -> dict[str, Any]:
         return parsed if isinstance(parsed, dict) else {}
     fields = parse_qs(body.decode("utf-8"), keep_blank_values=True)
     return {key: values[-1] for key, values in fields.items() if values}
-
-
-def _set_status_from_request(
-    store: ApprovalStore,
-    approval_id: str,
-    status: str,
-    payload: dict[str, Any],
-) -> Any:
-    try:
-        return store.set_status(
-            approval_id,
-            status,  # type: ignore[arg-type]
-            decided_by=str(payload.get("decided_by") or payload.get("by") or "approval-ui"),
-            decision_comment=_optional_str(payload.get("comment")),
-        )
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="approval not found") from exc
 
 
 def _render_index(approvals: list[Any], project_name: str) -> str:

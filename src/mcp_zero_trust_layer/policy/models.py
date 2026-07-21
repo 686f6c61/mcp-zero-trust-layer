@@ -4,7 +4,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-
 Decision = Literal["allow", "deny", "hide", "require_approval", "redact", "limit", "transform", "log"]
 
 

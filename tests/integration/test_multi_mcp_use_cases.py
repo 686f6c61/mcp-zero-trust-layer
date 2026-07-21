@@ -24,7 +24,7 @@ class UpstreamHandle:
 
     @property
     def requests(self) -> list[dict[str, Any]]:
-        return getattr(self.handler, "requests")
+        return self.handler.requests
 
 
 @pytest.fixture()

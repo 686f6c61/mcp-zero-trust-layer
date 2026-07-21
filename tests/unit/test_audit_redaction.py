@@ -27,6 +27,41 @@ def test_redacts_secret_values() -> None:
     assert redact_sensitive("Authorization: Bearer abc.def") == "Authorization: [REDACTED]"
 
 
+def test_redacts_broader_secret_material() -> None:
+    assert redact_sensitive({"credential": "x"})["credential"] == "[REDACTED]"
+    assert redact_sensitive({"access_key": "x"})["access_key"] == "[REDACTED]"
+    assert redact_sensitive({"private_key": "x"})["private_key"] == "[REDACTED]"
+    assert "[REDACTED]" in redact_sensitive("key AKIAIOSFODNN7EXAMPLE here")
+
+
+def test_hmac_chain_detects_forged_recompute(tmp_path: Path) -> None:
+    import json
+
+    from mcp_zero_trust_layer.audit.logger import event_hash
+
+    audit_path = tmp_path / "audit.jsonl"
+    key = "super-audit-secret"
+    logger = AuditLogger(
+        AuditConfig(destination="file", path=str(audit_path), hash_chain=True, hmac_key=key)
+    )
+    logger.log_decision(
+        RequestContext(server="github", method="tools/list"),
+        PolicyDecision(decision="allow", reason="first"),
+    )
+
+    ok, _ = verify_audit_hash_chain(audit_path, key=key)
+    assert ok is True
+
+    event = json.loads(audit_path.read_text(encoding="utf-8").strip())
+    event["reason"] = "tampered"
+    event["event_hash"] = event_hash(event)  # attacker recomputes without the key
+    audit_path.write_text(json.dumps(event, sort_keys=True) + "\n", encoding="utf-8")
+
+    ok, message = verify_audit_hash_chain(audit_path, key=key)
+    assert ok is False
+    assert "event_hash mismatch" in message
+
+
 def test_non_strict_audit_logs_write_failures_to_stderr(
     tmp_path: Path,
     capsys,

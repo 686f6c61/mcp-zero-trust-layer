@@ -7,6 +7,12 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  {{- if .Values.persistence.enabled }}
+  # A ReadWriteOnce state volume cannot be mounted by two pods at once, so avoid
+  # a rolling update that would deadlock on the shared claim.
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "mcpzt.name" . }}
@@ -79,6 +85,11 @@ spec:
           configMap:
             name: {{ include "mcpzt.fullname" . }}-config
         - name: state
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (printf "%s-state" (include "mcpzt.fullname" .)) }}
+          {{- else }}
           emptyDir: {}
+          {{- end }}
         - name: tmp
           emptyDir: {}

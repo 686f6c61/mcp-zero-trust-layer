@@ -11,6 +11,8 @@ from mcp_zero_trust_layer.capabilities.discovery import CapabilitySnapshot
 from mcp_zero_trust_layer.config.models import CapabilityMetadata, MCPZTConfig, ServerConfig
 
 CapabilityKind = Literal["tools", "resources", "prompts"]
+AccessLevel = Literal["read", "write", "delete", "execute", "admin"]
+RiskLevel = Literal["low", "medium", "high", "critical"]
 
 DESTRUCTIVE_RE = re.compile(r"(delete|drop|truncate|destroy|remove|purge|wipe)", re.I)
 CRITICAL_RE = re.compile(r"(refund|payment|transfer|merge|deploy|release|permission|admin)", re.I)
@@ -228,12 +230,13 @@ def _control_plane_policies() -> list[dict[str, Any]]:
 
 
 def _sql_policies(server: str, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    query_tools = [
-        item.get("name")
-        for item in tools
-        if isinstance(item.get("name"), str)
-        and re.search(r"(sql|query|postgres|database|db)", _searchable_text(item["name"], item), re.I)
-    ]
+    query_tools: list[str] = []
+    for item in tools:
+        name = item.get("name")
+        if isinstance(name, str) and re.search(
+            r"(sql|query|postgres|database|db)", _searchable_text(name, item), re.I
+        ):
+            query_tools.append(name)
     policies: list[dict[str, Any]] = []
     for tool in query_tools:
         policies.append(
@@ -275,10 +278,11 @@ def _server_payload(server: ServerConfig) -> dict[str, Any]:
     return server.model_dump(mode="json", exclude_none=True)
 
 
-def _infer_access(text: str, capability_type: CapabilityKind, item: dict[str, Any]) -> str:
+def _infer_access(text: str, capability_type: CapabilityKind, item: dict[str, Any]) -> AccessLevel:
     if capability_type != "tools":
         return "read"
-    annotations = item.get("annotations") if isinstance(item.get("annotations"), dict) else {}
+    raw_annotations = item.get("annotations")
+    annotations = raw_annotations if isinstance(raw_annotations, dict) else {}
     if annotations.get("destructiveHint") is True:
         return "delete" if DESTRUCTIVE_RE.search(text) else "write"
     if annotations.get("readOnlyHint") is True:
@@ -294,7 +298,7 @@ def _infer_access(text: str, capability_type: CapabilityKind, item: dict[str, An
     return "read"
 
 
-def _infer_risk(text: str, access: str) -> str:
+def _infer_risk(text: str, access: str) -> RiskLevel:
     if access == "read":
         return "medium" if CONFIDENTIAL_RE.search(text) else "low"
     if DESTRUCTIVE_RE.search(text) or access == "delete":

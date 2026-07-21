@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+
 # Stdio MCP upstreams require subprocess; command is an argv list and shell is disabled.
 import subprocess  # nosec B404
 import sys
 from typing import Any, TextIO
+
+try:
+    import select
+except ImportError:  # pragma: no cover - platform fallback
+    select = None  # type: ignore[assignment]
 
 from mcp_zero_trust_layer.config.models import ServerConfig
 from mcp_zero_trust_layer.config.secrets import SecretError, resolve_secret_value
@@ -52,7 +58,7 @@ class StdioProcessUpstream:
         if "id" not in message or "method" not in message:
             return None
 
-        response_line = self.process.stdout.readline()
+        response_line = self._readline_with_timeout()
         if not response_line:
             raise JSONRPCError(-32030, "stdio upstream closed stdout")
         try:
@@ -62,6 +68,19 @@ class StdioProcessUpstream:
         if not isinstance(response, dict):
             raise JSONRPCError(-32603, "invalid JSON-RPC response from stdio upstream")
         return response
+
+    def _readline_with_timeout(self) -> str:
+        assert self.process.stdout is not None
+        timeout = self.server.timeout
+        # select works on the pipe fd on POSIX; a hung upstream that never writes
+        # must not block the proxy indefinitely.
+        if timeout and select is not None:
+            ready, _, _ = select.select([self.process.stdout], [], [], timeout)
+            if not ready:
+                raise JSONRPCError(
+                    -32002, "stdio upstream timeout", {"server": self.server.name}
+                )
+        return self.process.stdout.readline()
 
     def close(self) -> None:
         if self.process.poll() is None:

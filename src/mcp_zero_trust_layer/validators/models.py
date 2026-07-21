@@ -8,10 +8,10 @@ class ValidatorResult(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
     @classmethod
-    def ok(cls) -> "ValidatorResult":
+    def ok(cls) -> ValidatorResult:
         return cls(passed=True)
 
     @classmethod
-    def fail(cls, message: str) -> "ValidatorResult":
+    def fail(cls, message: str) -> ValidatorResult:
         return cls(passed=False, errors=[message])
 

@@ -113,9 +113,7 @@ def _time_matches(
     parsed = _parse_timestamp(timestamp)
     if since is not None and parsed < since:
         return False
-    if until is not None and parsed > until:
-        return False
-    return True
+    return not (until is not None and parsed > until)
 
 
 def _parse_timestamp(value: str) -> datetime:

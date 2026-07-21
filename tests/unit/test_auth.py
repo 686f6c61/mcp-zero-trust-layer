@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
+from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
@@ -92,7 +92,7 @@ def test_jwt_maps_claims_to_identity() -> None:
             "roles": ["admin"],
             "client_id": "cursor",
             "scope": "mcp:read",
-            "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
+            "exp": datetime.now(UTC) + timedelta(minutes=10),
             "iss": "https://issuer.example",
             "aud": "mcpzt",
         },
@@ -127,7 +127,7 @@ def test_jwt_rejects_missing_scope() -> None:
         {
             "sub": "user-123",
             "scope": "other",
-            "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
+            "exp": datetime.now(UTC) + timedelta(minutes=10),
         },
         JWT_SECRET,
         algorithm="HS256",
@@ -150,7 +150,7 @@ def test_jwt_accepts_scp_list_scope_claim() -> None:
         {
             "sub": "user-123",
             "scp": ["mcp:read", "mcp:write"],
-            "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
+            "exp": datetime.now(UTC) + timedelta(minutes=10),
         },
         JWT_SECRET,
         algorithm="HS256",
@@ -180,7 +180,7 @@ def test_oidc_validates_jwks_issuer_and_audience(monkeypatch) -> None:
         {
             "sub": "oidc-user",
             "email": "oidc@example.com",
-            "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
+            "exp": datetime.now(UTC) + timedelta(minutes=10),
             "iss": "https://issuer.example",
             "aud": "mcpzt",
         },

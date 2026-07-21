@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+
 # Secret-provider integrations require subprocess; arguments are allowlisted and shell is disabled.
 import subprocess  # nosec B404
 from pathlib import Path

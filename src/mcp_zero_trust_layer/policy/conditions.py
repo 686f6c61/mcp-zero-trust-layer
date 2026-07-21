@@ -13,10 +13,7 @@ def evaluate_conditions(conditions: dict[str, Any], context: RequestContext) -> 
 def _evaluate_condition(path: str, expected: Any, context: RequestContext) -> bool:
     actual = _get_path(context, path)
     if isinstance(expected, dict):
-        for operator, operand in expected.items():
-            if not _compare(operator, actual, operand):
-                return False
-        return True
+        return all(_compare(operator, actual, operand) for operator, operand in expected.items())
     return actual == expected
 
 
@@ -33,10 +30,7 @@ def _get_path(context: RequestContext, path: str) -> Any:
     if current is None:
         return None
     for part in parts[1:]:
-        if isinstance(current, dict):
-            current = current.get(part)
-        else:
-            current = getattr(current, part, None)
+        current = current.get(part) if isinstance(current, dict) else getattr(current, part, None)
         if current is None:
             return None
     return current

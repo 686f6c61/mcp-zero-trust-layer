@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 import httpx
@@ -25,6 +26,9 @@ class ApprovalNotifier:
         try:
             response = httpx.post(url, json=payload, timeout=self.config.webhook_timeout)
             response.raise_for_status()
-        except Exception:
+        except Exception as exc:
+            # Never swallow delivery failures silently: an unnoticed webhook
+            # outage would erase the approval alerting channel.
+            print(f"mcpzt approval webhook delivery failed: {exc}", file=sys.stderr)
             if self.config.webhook_strict:
                 raise

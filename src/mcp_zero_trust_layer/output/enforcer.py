@@ -29,6 +29,10 @@ class OutputEnforcer:
         if policy.output.redact_fields:
             transformed = _redact_fields(transformed, set(policy.output.redact_fields))
 
+        if policy.output.redact_patterns:
+            patterns = [re.compile(pattern) for pattern in policy.output.redact_patterns]
+            transformed = _redact_patterns(transformed, patterns)
+
         return True, transformed, None
 
 
@@ -40,5 +44,18 @@ def _redact_fields(value: Any, fields: set[str]) -> Any:
         }
     if isinstance(value, list):
         return [_redact_fields(item, fields) for item in value]
+    return value
+
+
+def _redact_patterns(value: Any, patterns: list[re.Pattern[str]]) -> Any:
+    if isinstance(value, dict):
+        return {key: _redact_patterns(item, patterns) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_patterns(item, patterns) for item in value]
+    if isinstance(value, str):
+        redacted = value
+        for pattern in patterns:
+            redacted = pattern.sub("[REDACTED]", redacted)
+        return redacted
     return value
 

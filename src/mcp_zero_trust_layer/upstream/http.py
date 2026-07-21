@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from typing import Any
 
 import httpx
@@ -21,7 +22,10 @@ MAX_ERROR_BODY_BYTES = 4096
 
 class HTTPUpstreamClient:
     def __init__(self) -> None:
-        self._session_ids: dict[str, str] = {}
+        # Keyed by (server, downstream session) so upstream sessions are never
+        # shared across distinct downstream clients.
+        self._session_ids: dict[tuple[str, str], str] = {}
+        self._session_lock = threading.Lock()
 
     def send(
         self,
@@ -32,23 +36,27 @@ class HTTPUpstreamClient:
     ) -> dict[str, Any] | None:
         if not server.upstream:
             raise JSONRPCError(-32603, "HTTP upstream is not configured")
-        forwarded_headers = _forwarded_headers(headers or {})
+        inbound = headers or {}
+        forwarded_headers = _forwarded_headers(inbound)
         forwarded_headers.update(_configured_upstream_headers(server))
         forwarded_headers.setdefault("accept", "application/json, text/event-stream")
         forwarded_headers.setdefault("content-type", "application/json")
-        if session_id := self._session_ids.get(server.name):
-            forwarded_headers.setdefault("mcp-session-id", session_id)
+        session_key = (server.name, _downstream_session(inbound))
+        with self._session_lock:
+            cached_session = self._session_ids.get(session_key)
+        if cached_session:
+            forwarded_headers["mcp-session-id"] = cached_session
         try:
-            with httpx.Client(timeout=server.timeout) as client:
-                with client.stream(
-                    "POST",
-                    server.upstream,
-                    json=message,
-                    headers=forwarded_headers,
-                ) as response:
-                    content = _read_response_content(response, server)
-                    if session_id := response.headers.get("mcp-session-id"):
-                        self._session_ids[server.name] = session_id
+            with httpx.Client(timeout=server.timeout) as client, client.stream(
+                "POST",
+                server.upstream,
+                json=message,
+                headers=forwarded_headers,
+            ) as response:
+                content = _read_response_content(response, server)
+                if session_id := response.headers.get("mcp-session-id"):
+                    with self._session_lock:
+                        self._session_ids[session_key] = session_id
         except httpx.TimeoutException as exc:
             raise JSONRPCError(-32002, "Upstream timeout", {"server": server.name}) from exc
         except httpx.HTTPError as exc:
@@ -72,6 +80,13 @@ class HTTPUpstreamClient:
         if not isinstance(payload, dict):
             raise JSONRPCError(-32603, "Invalid upstream JSON-RPC response")
         return payload
+
+
+def _downstream_session(headers: dict[str, str]) -> str:
+    for key, value in headers.items():
+        if key.lower() == "mcp-session-id":
+            return value
+    return ""
 
 
 def _forwarded_headers(headers: dict[str, str]) -> dict[str, str]:

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import contextlib
-import os
 import hashlib
 import json
+import os
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -18,6 +18,10 @@ from mcp_zero_trust_layer.approvals.models import ApprovalRequest
 from mcp_zero_trust_layer.audit import redact_sensitive
 from mcp_zero_trust_layer.config.models import ApprovalsConfig
 from mcp_zero_trust_layer.core.context import RequestContext
+
+# Module-level alias: the public ``list`` method shadows the ``list`` builtin
+# inside the class body, so annotations use this alias instead.
+ApprovalRequestList = list[ApprovalRequest]
 
 
 class ApprovalStore:
@@ -43,7 +47,7 @@ class ApprovalStore:
             return self._sqlite_get(approval_id)
         return self._load().get(approval_id)
 
-    def list(self) -> list[ApprovalRequest]:
+    def list(self) -> ApprovalRequestList:
         if self.backend == "sqlite":
             return self._sqlite_list()
         return sorted(self._load().values(), key=lambda item: item.created_at)
@@ -51,7 +55,7 @@ class ApprovalStore:
     def set_status(
         self,
         approval_id: str,
-        status: Literal["pending", "approved", "denied", "expired"],
+        status: Literal["pending", "approved", "denied", "expired", "consumed"],
         *,
         decided_by: str | None = None,
         decision_comment: str | None = None,
@@ -67,6 +71,7 @@ class ApprovalStore:
             approvals = self._load_unlocked()
             if approval_id not in approvals:
                 raise KeyError(approval_id)
+            _assert_valid_transition(approvals[approval_id].status, status)
             updated = _with_status(
                 approvals[approval_id],
                 status,
@@ -79,12 +84,63 @@ class ApprovalStore:
 
     def is_valid_for(self, approval_id: str, context: RequestContext, policy_id: str) -> bool:
         approval = self.get(approval_id)
+        return self._is_valid(approval, context, policy_id)
+
+    def consume_if_valid(
+        self, approval_id: str, context: RequestContext, policy_id: str
+    ) -> bool:
+        """Atomically validate and mark an approval as consumed (single use).
+
+        Returns True only for the first valid consumption. Any later replay of the
+        same approval_id returns False, closing the TOCTOU window because the
+        validate-and-consume happens inside one exclusive section.
+        """
+        if self.backend == "sqlite":
+            return self._sqlite_consume_if_valid(approval_id, context, policy_id)
+        with self._locked():
+            approvals = self._load_unlocked()
+            approval = approvals.get(approval_id)
+            if approval is None or not self._is_valid(approval, context, policy_id):
+                return False
+            approvals[approval_id] = _with_status(
+                approval, "consumed", decided_by=approval.decided_by, decision_comment=None
+            )
+            self._save_unlocked(approvals)
+            return True
+
+    def _sqlite_consume_if_valid(
+        self, approval_id: str, context: RequestContext, policy_id: str
+    ) -> bool:
+        with self._sqlite_connection() as connection:
+            _ensure_sqlite_schema(connection)
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT payload FROM approvals WHERE id = ?",
+                (approval_id,),
+            ).fetchone()
+            approval = _approval_from_sqlite_payload(row["payload"]) if row else None
+            if approval is None or not self._is_valid(approval, context, policy_id):
+                return False
+            consumed = _with_status(
+                approval, "consumed", decided_by=approval.decided_by, decision_comment=None
+            )
+            connection.execute(
+                "UPDATE approvals SET status = ?, payload = ? WHERE id = ?",
+                (consumed.status, _sqlite_payload(consumed), approval_id),
+            )
+            return True
+
+    @staticmethod
+    def _is_valid(
+        approval: ApprovalRequest | None, context: RequestContext, policy_id: str
+    ) -> bool:
         if approval is None or not approval.is_active():
             return False
         return all(
             [
                 approval.policy_id == policy_id,
                 approval.server == context.server,
+                approval.method == context.method,
                 approval.capability == context.capability,
                 approval.capability_type == context.capability_type,
                 approval.identity_subject == context.identity.subject,
@@ -97,6 +153,7 @@ class ApprovalStore:
     def _new_request(self, context: RequestContext, policy_id: str) -> ApprovalRequest:
         return ApprovalRequest(
             server=context.server,
+            method=context.method,
             capability=context.capability,
             capability_type=context.capability_type,
             policy_id=policy_id,
@@ -105,7 +162,7 @@ class ApprovalStore:
             agent_id=context.identity.agent_id,
             arguments_hash=hash_arguments(context.arguments),
             arguments_redacted=redact_sensitive(context.arguments),
-            expires_at=datetime.now(timezone.utc) + timedelta(seconds=self.default_ttl_seconds),
+            expires_at=datetime.now(UTC) + timedelta(seconds=self.default_ttl_seconds),
         )
 
     def _load(self) -> dict[str, ApprovalRequest]:
@@ -171,7 +228,7 @@ class ApprovalStore:
             return None
         return _approval_from_sqlite_payload(row["payload"])
 
-    def _sqlite_list(self) -> list[ApprovalRequest]:
+    def _sqlite_list(self) -> ApprovalRequestList:
         with self._sqlite_connection() as connection:
             _ensure_sqlite_schema(connection)
             rows = connection.execute(
@@ -182,7 +239,7 @@ class ApprovalStore:
     def _sqlite_set_status(
         self,
         approval_id: str,
-        status: Literal["pending", "approved", "denied", "expired"],
+        status: Literal["pending", "approved", "denied", "expired", "consumed"],
         *,
         decided_by: str | None = None,
         decision_comment: str | None = None,
@@ -195,8 +252,10 @@ class ApprovalStore:
             ).fetchone()
             if row is None:
                 raise KeyError(approval_id)
+            existing = _approval_from_sqlite_payload(row["payload"])
+            _assert_valid_transition(existing.status, status)
             updated = _with_status(
-                _approval_from_sqlite_payload(row["payload"]),
+                existing,
                 status,
                 decided_by=decided_by,
                 decision_comment=decision_comment,
@@ -229,9 +288,25 @@ def hash_arguments(arguments: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+_ALLOWED_TRANSITIONS: dict[str, set[str]] = {
+    "pending": {"approved", "denied", "expired"},
+    "approved": {"consumed", "expired"},
+    "denied": set(),
+    "expired": set(),
+    "consumed": set(),
+}
+
+
+def _assert_valid_transition(current: str, new: str) -> None:
+    if new == current:
+        return
+    if new not in _ALLOWED_TRANSITIONS.get(current, set()):
+        raise ValueError(f"invalid approval transition: {current} -> {new}")
+
+
 def _with_status(
     approval: ApprovalRequest,
-    status: Literal["pending", "approved", "denied", "expired"],
+    status: Literal["pending", "approved", "denied", "expired", "consumed"],
     *,
     decided_by: str | None,
     decision_comment: str | None,
@@ -246,7 +321,7 @@ def _with_status(
             }
         )
     else:
-        update["decided_at"] = datetime.now(timezone.utc)
+        update["decided_at"] = datetime.now(UTC)
         update["decided_by"] = decided_by
         update["decision_comment"] = decision_comment
     return approval.model_copy(update=update)

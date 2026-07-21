@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
@@ -137,6 +138,7 @@ approvals:
 DEMO_FAKE_MCP = '''from __future__ import annotations
 
 import json
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -207,8 +209,13 @@ class DemoMCPHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    server = ThreadingHTTPServer(("127.0.0.1", 3001), DemoMCPHandler)
-    print("fake MCP listening on http://127.0.0.1:3001/mcp", flush=True)
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else __UPSTREAM_PORT__
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", port), DemoMCPHandler)
+    except OSError as exc:
+        print(f"fake MCP could not bind 127.0.0.1:{port}: {exc}", file=sys.stderr, flush=True)
+        raise SystemExit(1) from exc
+    print(f"fake MCP listening on http://127.0.0.1:{port}/mcp", flush=True)
     server.serve_forever()
 '''
 
@@ -227,7 +234,7 @@ auth:
 servers:
   - name: demo
     transport: http
-    upstream: http://127.0.0.1:3001/mcp
+    upstream: http://127.0.0.1:__UPSTREAM_PORT__/mcp
 
 capability_mappings:
   demo:
@@ -303,7 +310,7 @@ import urllib.request
 from typing import Any
 
 
-BASE_URL = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "http://127.0.0.1:8765"
+BASE_URL = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "http://127.0.0.1:__GATEWAY_PORT__"
 
 
 def rpc(request_id: int, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -343,6 +350,8 @@ set -eu
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PYTHON=${PYTHON:-python3}
 MCPZT=${MCPZT:-mcpzt}
+UPSTREAM_PORT=${UPSTREAM_PORT:-__UPSTREAM_PORT__}
+GATEWAY_PORT=${GATEWAY_PORT:-__GATEWAY_PORT__}
 cd "$DIR"
 
 cleanup() {
@@ -351,15 +360,28 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-"$PYTHON" fake_mcp.py &
+wait_for() {
+  # Poll a URL until it answers or the attempt budget runs out.
+  i=0
+  while [ "$i" -lt 50 ]; do
+    if "$PYTHON" -c "import sys,urllib.request; urllib.request.urlopen(sys.argv[1], timeout=1)" "$1" 2>/dev/null; then
+      return 0
+    fi
+    i=$((i + 1))
+    sleep 0.2
+  done
+  echo "timed out waiting for $1" >&2
+  return 1
+}
+
+"$PYTHON" fake_mcp.py "$UPSTREAM_PORT" &
 UPSTREAM_PID=$!
-sleep 1
 
-"$MCPZT" run --config mcpzt.yaml --host 127.0.0.1 --port 8765 &
+"$MCPZT" run --config mcpzt.yaml --host 127.0.0.1 --port "$GATEWAY_PORT" &
 GATEWAY_PID=$!
-sleep 2
+wait_for "http://127.0.0.1:${GATEWAY_PORT}/healthz"
 
-"$PYTHON" demo_client.py http://127.0.0.1:8765
+"$PYTHON" demo_client.py "http://127.0.0.1:${GATEWAY_PORT}"
 """
 
 
@@ -413,11 +435,21 @@ def demo(
     force: Annotated[bool, typer.Option(help="Overwrite existing demo files.")] = False,
 ) -> None:
     """Create a runnable local demo with a fake MCP upstream."""
+    # Pick ports that are free on this host so the demo does not silently collide
+    # with something already listening (a local nginx on 3001, another gateway, ...).
+    upstream_port = _free_port(3001)
+    gateway_port = _free_port(8765, avoid={upstream_port})
+
+    def _fill(template: str) -> str:
+        return template.replace("__UPSTREAM_PORT__", str(upstream_port)).replace(
+            "__GATEWAY_PORT__", str(gateway_port)
+        )
+
     files = {
-        "fake_mcp.py": DEMO_FAKE_MCP,
-        CONFIG_FILENAME: DEMO_CONFIG,
-        "demo_client.py": DEMO_CLIENT,
-        "run_demo.sh": DEMO_RUNNER,
+        "fake_mcp.py": _fill(DEMO_FAKE_MCP),
+        CONFIG_FILENAME: _fill(DEMO_CONFIG),
+        "demo_client.py": _fill(DEMO_CLIENT),
+        "run_demo.sh": _fill(DEMO_RUNNER),
         "README.md": DEMO_README,
     }
     if output.exists() and not force and any((output / name).exists() for name in files):
@@ -429,7 +461,23 @@ def demo(
         if name == "run_demo.sh":
             path.chmod(0o755)
     console.print(f"[green]Created demo[/green] {output}")
+    console.print(f"Upstream port {upstream_port}, gateway port {gateway_port}")
     console.print(f"Run it with: [bold]{output / 'run_demo.sh'}[/bold]")
+
+
+def _free_port(preferred: int, *, avoid: set[int] | None = None) -> int:
+    """Return ``preferred`` if it can be bound, otherwise an OS-assigned free port."""
+    avoid = avoid or set()
+    if preferred not in avoid:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("127.0.0.1", preferred))
+                return preferred
+            except OSError:
+                pass
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
 
 
 @app.command()
@@ -761,7 +809,7 @@ def discover(
         snapshot = discover_capabilities(config, server, upstream)
     finally:
         if hasattr(upstream, "close"):
-            upstream.close()  # type: ignore[attr-defined]
+            upstream.close()
     output = output or default_snapshot_path(server)
     write_snapshot(snapshot, output)
     console.print(f"[green]Wrote capability snapshot[/green] {output}")
@@ -784,7 +832,7 @@ def diff(
         current = discover_capabilities(config, server, upstream)
     finally:
         if hasattr(upstream, "close"):
-            upstream.close()  # type: ignore[attr-defined]
+            upstream.close()
     capability_diff = diff_snapshots(previous, current)
     console.print_json(capability_diff.model_dump_json())
     if capability_diff.has_changes():
@@ -814,7 +862,7 @@ def scan(
                 capability_snapshot = discover_capabilities(config, server, upstream)
             finally:
                 if hasattr(upstream, "close"):
-                    upstream.close()  # type: ignore[attr-defined]
+                    upstream.close()
         report = scan_snapshot(config, capability_snapshot)
     except (ConfigError, ValueError) as exc:
         console.print(f"[red]Cannot scan:[/red] {exc}")
@@ -858,7 +906,8 @@ def audit_verify(
         console.print("[red]audit verify requires a file audit path[/red]")
         raise typer.Exit(1)
     target = audit_path or Path(config.audit.path)
-    ok, message = verify_audit_hash_chain(target)
+    audit_key = AuditLogger(config.audit)._hmac_key
+    ok, message = verify_audit_hash_chain(target, key=audit_key)
     if ok:
         console.print(f"[green]OK[/green] {message}")
         return
@@ -1318,15 +1367,18 @@ def _lint_auth(config: MCPZTConfig, findings: list[dict[str, str]]) -> None:
             "production trusts caller identity headers",
             "Only enable this behind a trusted gateway that strips spoofed x-mcpzt-* headers.",
         )
-    if config.project.environment == "production" and config.auth.mode in {"jwt", "oidc"}:
-        if not config.auth.required_scopes:
-            _lint_add(
-                findings,
-                "warning",
-                "auth.required_scopes",
-                "JWT/OIDC auth has no required scopes",
-                "Require at least one MCPZT-specific scope for production clients.",
-            )
+    if (
+        config.project.environment == "production"
+        and config.auth.mode in {"jwt", "oidc"}
+        and not config.auth.required_scopes
+    ):
+        _lint_add(
+            findings,
+            "warning",
+            "auth.required_scopes",
+            "JWT/OIDC auth has no required scopes",
+            "Require at least one MCPZT-specific scope for production clients.",
+        )
 
 
 def _lint_servers(config: MCPZTConfig, findings: list[dict[str, str]]) -> None:
@@ -1792,7 +1844,7 @@ def _discover_configured_servers(config: MCPZTConfig) -> list[CapabilitySnapshot
             snapshots.append(discover_capabilities(config, selected.name, upstream))
         finally:
             if hasattr(upstream, "close"):
-                upstream.close()  # type: ignore[attr-defined]
+                upstream.close()
     return snapshots
 
 
@@ -1942,7 +1994,9 @@ def _auth_detail(checks: list[tuple[str, str, str]], config: MCPZTConfig) -> str
     if config.auth.token:
         _doctor_add(checks, "WARN", "auth", "inline auth.token should not be committed")
         return detail + "; prefer auth.token_env for real secrets"
-    return detail
+    # Unreachable: _auth_detail runs only after _auth_has_token confirmed a token
+    # or token_env is set, so one of the branches above always returns first.
+    return detail  # pragma: no cover
 
 
 def _doctor_state_paths(checks: list[tuple[str, str, str]], config: MCPZTConfig) -> None:

@@ -110,7 +110,8 @@ def _mcpzt_server(logical_name: str, source_server: dict[str, Any]) -> dict[str,
             payload["upstream_headers"] = source_server["headers"]
         return payload
     if isinstance(source_server.get("command"), str):
-        env = source_server.get("env") if isinstance(source_server.get("env"), dict) else {}
+        raw_env = source_server.get("env")
+        env = raw_env if isinstance(raw_env, dict) else {}
         return {
             "name": logical_name,
             "transport": "stdio",

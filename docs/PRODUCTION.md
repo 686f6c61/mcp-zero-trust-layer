@@ -48,11 +48,13 @@ audit:
   path: /var/log/mcpzt/audit.jsonl
   strict: true
   hash_chain: true
+  hmac_key_env: MCPZT_AUDIT_HMAC_KEY
 
 approvals:
   backend: sqlite
   path: /var/lib/mcpzt/approvals.sqlite3
   default_ttl_seconds: 900
+  require_separation_of_duties: true
 
 metrics:
   enabled: true
@@ -286,7 +288,7 @@ mcpzt scan --config mcpzt.yaml --snapshot .mcpzt-capabilities/github.json
 
 ## Auditing And Monitoring
 
-Audit events are JSONL. Secret-like keys and bearer-style values are redacted recursively before write. Store audit logs on protected storage and keep them out of source control.
+Audit events are JSONL. Secret-like keys and secret-shaped values are redacted recursively before write, covering common key names plus bearer tokens, `AKIA` access keys, JWTs and PEM private-key blocks. The audit file is created with `0600` permissions and appended under an exclusive lock so concurrent writers cannot fork the chain. Store audit logs on protected storage and keep them out of source control.
 
 ```bash
 mcpzt audit tail --config /etc/mcpzt/mcpzt.yaml
@@ -306,11 +308,19 @@ mcpzt audit search \
   --format json
 ```
 
-With `audit.hash_chain: true`, each event carries `previous_event_hash` and `event_hash`. This gives operators a simple tamper-evidence check for local JSONL audit files. It does not replace append-only storage or centralized logging, but it makes reorder, edit and partial corruption easier to detect.
+With `audit.hash_chain: true`, each event carries `previous_event_hash`, a monotonic `sequence` and `event_hash`. An unkeyed chain makes reorder, edit and partial corruption easier to detect during review, but it cannot stop an attacker who can rewrite the whole file and recompute every hash. For tamper-evidence against that attacker, set `audit.hmac_key_env` so the per-event hash is keyed with a secret kept off the log host; the chain then cannot be recomputed without the key. This still complements, rather than replaces, append-only storage and centralized logging.
+
+```yaml
+audit:
+  hash_chain: true
+  hmac_key_env: MCPZT_AUDIT_HMAC_KEY
+```
 
 ```bash
 mcpzt audit verify --config /etc/mcpzt/mcpzt.yaml
 ```
+
+`mcpzt audit verify` picks up the configured HMAC key automatically.
 
 For production, ship audit JSONL to the existing log pipeline. Monitor at least these event classes: denied requests, validator failures, approval-required decisions, approved retries, output redactions, output blocks, upstream errors and audit write failures.
 
@@ -336,7 +346,9 @@ mcpzt approve allow <approval-id> \
   --comment "reviewed release PR"
 ```
 
-Approved retries are bound to the original identity, server, capability, policy and argument hash. If the retry changes the arguments, the previous approval is invalid. The approval ID is stripped before the request reaches upstream.
+Approved retries are bound to the original identity, server, method, capability, policy and argument hash. If the retry changes the arguments, the previous approval is invalid. The approval ID is stripped before the request reaches upstream.
+
+Approvals are single use. The first valid retry executes and the approval is atomically marked consumed in the same locked step, so an approved `approval_id` cannot be replayed to run a high-risk action repeatedly during its TTL. Status transitions are also validated: a denied or expired approval cannot be flipped back to approved.
 
 Use the table output for human operators and the JSON output for review dashboards, ticketing glue or internal approval UIs. Automation should not scrape terminal tables because column widths and styling are optimized for people.
 
@@ -360,7 +372,7 @@ mcpzt approve serve \
   --port 8770
 ```
 
-Run the UI on localhost for direct operator access or put it behind an existing internal auth gateway. The UI itself is intentionally small and should not be treated as an identity provider. The approval decisions it writes are still audited through the normal approval store and audit log path.
+The UI binds to `127.0.0.1` by default and authenticates every decision through the project `auth` configuration. With `auth.mode: jwt` or `oidc`, an approver must present a valid token, and the recorded `decided_by` comes from the authenticated identity rather than the request body. With `approvals.require_separation_of_duties` (the default), the identity that triggered a call cannot approve its own request. Configure `auth` before exposing the UI beyond localhost; it is a review surface, not an identity provider. The approval decisions it writes are still audited through the normal approval store and audit log path.
 
 Approval webhooks can notify a separate review experience or operations workflow. They receive redacted approval data for creation and decision events. Keep webhook endpoints internal, authenticate them at the network or gateway layer, and decide deliberately whether webhook failure should be best-effort or strict.
 
@@ -422,7 +434,7 @@ For capability drift concerns, run `mcpzt diff` against each affected server and
 
 Before exposing MCPZT to real users, confirm that the following are true.
 
-The config validates in production mode. `mcpzt config lint --strict` has no findings that should block the release. `mcpzt policy coverage`, `mcpzt policy risks` and `mcpzt policy unused` have been reviewed. `mcpzt doctor --production --strict` has no failures. Authentication is enabled. OIDC/JWT configs have issuer and audience. `runtime.default_decision` is deny. `runtime.dry_run` is false. Host and origin controls are set where relevant. Request and response byte limits are conservative. Upstream MCP servers are private. Audit logs are protected, strict and hash-chain verification has been tested. `mcpzt audit search` has been exercised against a sample event. Metrics are scraped or intentionally disabled. Approval storage is protected. The approval UI, if enabled, is bound to localhost or protected by internal auth. Approval webhooks, if configured, have been tested. Capability snapshots exist for important servers. `mcpzt scan` has been run on those snapshots. Representative allow, deny, validator, output and approval cases have been tested.
+The config validates in production mode. `mcpzt config lint --strict` has no findings that should block the release. `mcpzt policy coverage`, `mcpzt policy risks` and `mcpzt policy unused` have been reviewed. `mcpzt doctor --production --strict` has no failures. Authentication is enabled. OIDC/JWT configs have issuer and audience. `runtime.default_decision` is deny. `runtime.dry_run` is false. Host and origin controls are set where relevant. Request and response byte limits are conservative. Upstream MCP servers are private. Audit logs are protected, strict and hash-chain verification has been tested; `audit.hmac_key_env` is set and the key is stored off the log host. `mcpzt audit search` has been exercised against a sample event. Metrics are scraped or intentionally disabled. Approval storage is protected. The approval UI, if enabled, is bound to localhost or protected by `auth`, and `approvals.require_separation_of_duties` is enabled. Approval webhooks, if configured, have been tested. Capability snapshots exist for important servers. `mcpzt scan` has been run on those snapshots. Representative allow, deny, validator, output and approval cases have been tested.
 
 ## Standards Notes
 

@@ -90,17 +90,25 @@ policies:
         - phone
         - api_key
         - token
+      # Catch PII embedded in tool-result text where there is no discrete field.
+      redact_patterns:
+        - "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"
+        - "\\+?\\d[\\d ().-]{7,}\\d"
 
 audit:
   destination: file
   path: /var/log/mcpzt/audit.jsonl
   strict: true
   hash_chain: true
+  # Keyed hash chain: keep this secret off the log host for tamper-evidence.
+  hmac_key_env: MCPZT_AUDIT_HMAC_KEY
 
 approvals:
   backend: sqlite
   path: /var/lib/mcpzt/approvals.sqlite3
   default_ttl_seconds: 900
+  # An operator cannot approve a call they triggered themselves (default true).
+  require_separation_of_duties: true
 
 metrics:
   enabled: true

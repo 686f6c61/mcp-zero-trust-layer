@@ -4,7 +4,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-
 Environment = Literal["development", "local", "staging", "production", "test"]
 Effect = Literal["allow", "deny", "hide", "require_approval", "redact", "limit", "transform", "log"]
 Risk = Literal["low", "medium", "high", "critical"]
@@ -48,7 +47,7 @@ class AuthConfig(BaseModel):
     agent_id_claim: str = "agent_id"
 
     @model_validator(mode="after")
-    def validate_token_sources(self) -> "AuthConfig":
+    def validate_token_sources(self) -> AuthConfig:
         if self.token and self.token_env:
             raise ValueError("auth.token and auth.token_env are mutually exclusive")
         return self
@@ -65,7 +64,7 @@ class ServerConfig(BaseModel):
     max_response_bytes: int = 10_485_760
 
     @model_validator(mode="after")
-    def validate_target(self) -> "ServerConfig":
+    def validate_target(self) -> ServerConfig:
         if self.transport == "http" and not self.upstream:
             raise ValueError(f"server {self.name!r} with transport http requires upstream")
         if self.transport == "stdio" and not self.command:
@@ -112,6 +111,7 @@ class PolicyMatch(BaseModel):
 
 class OutputPolicy(BaseModel):
     redact_fields: list[str] = Field(default_factory=list)
+    redact_patterns: list[str] = Field(default_factory=list)
     deny_if_matches: list[str] = Field(default_factory=list)
     max_bytes: int | None = None
     include_fields: list[str] = Field(default_factory=list)
@@ -160,6 +160,8 @@ class AuditConfig(BaseModel):
     path: str = "./mcpzt-audit.jsonl"
     strict: bool = True
     hash_chain: bool = True
+    hmac_key: str | None = None
+    hmac_key_env: str | None = None
 
 
 class ApprovalsConfig(BaseModel):
@@ -169,6 +171,7 @@ class ApprovalsConfig(BaseModel):
     webhook_url: str | None = None
     webhook_strict: bool = False
     webhook_timeout: float = 5.0
+    require_separation_of_duties: bool = True
 
 
 class MetricsConfig(BaseModel):
@@ -197,7 +200,7 @@ class MCPZTConfig(BaseModel):
     policy_engine: PolicyEngineConfig = Field(default_factory=PolicyEngineConfig)
 
     @model_validator(mode="after")
-    def validate_config(self) -> "MCPZTConfig":
+    def validate_config(self) -> MCPZTConfig:
         self._validate_unique_names()
         self._validate_production_settings()
         self._validate_policy_engine_settings()

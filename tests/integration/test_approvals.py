@@ -109,6 +109,32 @@ def test_approval_required_then_approved_retry_reaches_upstream(tmp_path: Path) 
     ]
 
 
+def test_approved_call_cannot_be_replayed(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    upstream = RecordingUpstream()
+    pipeline = MCPPipeline(config, upstream)
+    identity = Identity(subject="ana", client_id="cursor")
+
+    first = pipeline.handle(
+        "github",
+        _merge_message({"repo": "acme/api", "pull_number": 1}),
+        identity=identity,
+    )
+    approval_id = first["error"]["data"]["approval_id"]  # type: ignore[index]
+    ApprovalStore(config.approvals).set_status(approval_id, "approved", decided_by="reviewer")
+
+    approved_message = _merge_message(
+        {"repo": "acme/api", "pull_number": 1, "_mcpzt_approval_id": approval_id}
+    )
+    first_use = pipeline.handle("github", approved_message, identity=identity)
+    replay = pipeline.handle("github", approved_message, identity=identity)
+
+    assert first_use == {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
+    assert replay is not None
+    assert replay["error"]["code"] == -32010
+    assert upstream.messages == [_merge_message({"repo": "acme/api", "pull_number": 1})]
+
+
 def test_approval_retry_with_changed_arguments_is_rejected(tmp_path: Path) -> None:
     config = _config(tmp_path)
     upstream = RecordingUpstream()

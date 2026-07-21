@@ -101,7 +101,7 @@ class AuthResolver:
             raise AuthError("invalid API key")
 
     def _decode_jwt(self, token: str) -> dict[str, Any]:
-        options = {"require": ["exp"]}
+        options: Any = {"require": ["exp"]}
         try:
             if self.config.jwks_url or self.config.mode == "oidc":
                 key = self._jwk_client_for_config().get_signing_key_from_jwt(token).key

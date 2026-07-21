@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +47,7 @@ def discover_capabilities(
     server = _server(config, server_name)
     snapshot = CapabilitySnapshot(
         server=server.name,
-        discovered_at=datetime.now(timezone.utc).isoformat(),
+        discovered_at=datetime.now(UTC).isoformat(),
     )
     _initialize_for_discovery(server, upstream, snapshot)
     for field, (method, result_key, _identity_key) in DISCOVERY_METHODS.items():

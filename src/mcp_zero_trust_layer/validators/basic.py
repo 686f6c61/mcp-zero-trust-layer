@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 import socket
 from pathlib import Path
@@ -10,14 +11,44 @@ from urllib.parse import urlparse
 from mcp_zero_trust_layer.validators.models import ValidatorResult
 
 FORBIDDEN_SQL_RE = re.compile(
-    r"\b(DROP|DELETE|UPDATE|INSERT|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|MERGE|CALL|EXEC)\b",
+    r"\b("
+    r"DROP|DELETE|UPDATE|INSERT|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|MERGE|CALL|EXEC|EXECUTE|"
+    r"ATTACH|DETACH|COPY|PRAGMA|VACUUM|REPLACE|LOAD|SET|PREPARE|DEALLOCATE|DO|HANDLER|"
+    r"REINDEX|ANALYZE|LOCK|UNLOCK|RENAME|IMPORT|INSTALL|KILL|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|"
+    r"INTO"
+    r")\b",
+    re.IGNORECASE,
+)
+# Functions that read/write the host or load native code even from a SELECT.
+FORBIDDEN_SQL_FUNCTION_RE = re.compile(
+    r"\b("
+    r"load_extension|readfile|writefile|sys_exec|sys_eval|xp_cmdshell|"
+    r"lo_import|lo_export|pg_read_file|pg_read_binary_file|pg_ls_dir|dblink|"
+    r"load_file|into_outfile|into_dumpfile"
+    r")\b",
     re.IGNORECASE,
 )
 SQL_BLOCK_COMMENT_RE = re.compile(r"/\*[^*]*\*+(?:[^/*][^*]*\*+)*/")
+# MySQL executes the body of version/optimizer comments (/*! ... */, /*+ ... */).
+SQL_EXECUTABLE_COMMENT_RE = re.compile(r"/\*[!+]")
 CLOUD_METADATA_HOSTS = {
     str(ipaddress.IPv4Address(0xA9FEA9FE)),
     "metadata.google.internal",
 }
+DEFAULT_BLOCKED_PATHS = [
+    "/etc",
+    "/var/run",
+    "/private/etc",
+    "/proc",
+    "/sys",
+    "/root",
+    "~/.ssh",
+    "~/.aws",
+    "~/.config",
+    "~/.kube",
+]
+# Carrier-grade NAT range that is not flagged by ipaddress.is_private.
+_CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 
 
 def validate_sql_read_only(arguments: dict[str, Any], options: dict[str, Any]) -> ValidatorResult:
@@ -26,9 +57,17 @@ def validate_sql_read_only(arguments: dict[str, Any], options: dict[str, Any]) -
     if not isinstance(query, str) or not query.strip():
         return ValidatorResult.fail("sql_read_only could not find a SQL string")
 
+    if SQL_EXECUTABLE_COMMENT_RE.search(query):
+        return ValidatorResult.fail("sql_read_only blocked an executable SQL comment")
+
     normalized = _strip_sql_comments(query).strip()
+    statements = _split_sql_statements(normalized)
+    if len(statements) > 1:
+        return ValidatorResult.fail("sql_read_only blocked multiple SQL statements")
     if FORBIDDEN_SQL_RE.search(normalized):
         return ValidatorResult.fail("sql_read_only blocked a destructive SQL keyword")
+    if FORBIDDEN_SQL_FUNCTION_RE.search(normalized):
+        return ValidatorResult.fail("sql_read_only blocked a dangerous SQL function")
     if not re.match(r"^(SELECT|WITH|EXPLAIN)\b", normalized, flags=re.IGNORECASE):
         return ValidatorResult.fail("sql_read_only only allows SELECT, WITH, or EXPLAIN statements")
     return ValidatorResult.ok()
@@ -52,7 +91,7 @@ def validate_filesystem_path(arguments: dict[str, Any], options: dict[str, Any])
         if not any(_is_relative_to(resolved, root) for root in root_paths):
             return ValidatorResult.fail("filesystem_path blocked path outside allowed_roots")
 
-    for sensitive in options.get("blocked_paths", ["/etc", "/var/run", "/private/etc"]):
+    for sensitive in options.get("blocked_paths", DEFAULT_BLOCKED_PATHS):
         sensitive_path = (
             _path_relative_to_base(str(sensitive), base_dir).expanduser().resolve(strict=False)
         )
@@ -77,7 +116,7 @@ def validate_url(arguments: dict[str, Any], options: dict[str, Any]) -> Validato
     parse_error = _url_parse_error(parsed, options)
     if parse_error:
         return ValidatorResult.fail(parse_error)
-    host = parsed.hostname.lower()
+    host = (parsed.hostname or "").lower()
     host_error = _url_host_error(host, options)
     if host_error:
         return ValidatorResult.fail(host_error)
@@ -118,15 +157,19 @@ def validate_regex(arguments: dict[str, Any], options: dict[str, Any]) -> Valida
     field = options.get("field")
     if not field:
         return ValidatorResult.fail("regex validator requires field option")
-    value = str(_get_path(arguments, field) or "")
+    raw_value = _get_path(arguments, field)
+    value = "" if raw_value is MISSING or raw_value is None else str(raw_value)
 
     allow = options.get("allow")
-    if allow and not re.search(allow, value):
-        return ValidatorResult.fail("regex validator did not match allow pattern")
+    try:
+        if allow and not re.search(allow, value):
+            return ValidatorResult.fail("regex validator did not match allow pattern")
 
-    deny = options.get("deny")
-    if deny and re.search(deny, value):
-        return ValidatorResult.fail("regex validator matched deny pattern")
+        deny = options.get("deny")
+        if deny and re.search(deny, value):
+            return ValidatorResult.fail("regex validator matched deny pattern")
+    except re.error as exc:
+        return ValidatorResult.fail(f"regex validator has an invalid pattern: {exc}")
 
     return ValidatorResult.ok()
 
@@ -135,10 +178,10 @@ def validate_required_forbidden_fields(
     arguments: dict[str, Any], options: dict[str, Any]
 ) -> ValidatorResult:
     for field in options.get("required", []):
-        if _get_path(arguments, field) is None:
+        if _get_path(arguments, field) is MISSING:
             return ValidatorResult.fail(f"required field missing: {field}")
     for field in options.get("forbidden", []):
-        if _get_path(arguments, field) is not None:
+        if _get_path(arguments, field) is not MISSING:
             return ValidatorResult.fail(f"forbidden field present: {field}")
     return ValidatorResult.ok()
 
@@ -149,6 +192,8 @@ def validate_max_field_bytes(arguments: dict[str, Any], options: dict[str, Any])
     if not field or not isinstance(max_bytes, int):
         return ValidatorResult.fail("max_field_bytes requires field and integer max_bytes")
     value = _get_path(arguments, field)
+    if value is MISSING:
+        return ValidatorResult.ok()
     if len(str(value or "").encode("utf-8")) > max_bytes:
         return ValidatorResult.fail(f"field exceeds max_bytes: {field}")
     return ValidatorResult.ok()
@@ -166,27 +211,97 @@ def _strip_sql_comments(query: str) -> str:
     return SQL_BLOCK_COMMENT_RE.sub("", without_line_comments)
 
 
+def _split_sql_statements(query: str) -> list[str]:
+    """Split on top-level ``;`` while ignoring separators inside string literals.
+
+    A trailing separator yields a single statement; a separator followed by more
+    SQL yields multiple, which the read-only validator rejects (stacked queries).
+    """
+    statements: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    for char in query:
+        if quote is not None:
+            current.append(char)
+            if char == quote:
+                quote = None
+        elif char in "'\"":
+            quote = char
+            current.append(char)
+        elif char == ";":
+            statements.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    statements.append("".join(current))
+    return [statement for statement in statements if statement.strip()]
+
+
 def _is_relative_to(candidate: Path, root: Path) -> bool:
+    # os.path.normcase folds case on case-insensitive filesystems (macOS, Windows)
+    # so /ETC/passwd is still recognised as being under /etc.
+    candidate_norm = Path(os.path.normcase(str(candidate)))
+    root_norm = Path(os.path.normcase(str(root)))
     try:
-        candidate.relative_to(root)
+        candidate_norm.relative_to(root_norm)
         return True
     except ValueError:
         return False
 
 
-def _is_private_ip(host: str) -> bool:
+def _normalize_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     try:
-        ip = ipaddress.ip_address(host)
+        return ipaddress.ip_address(host)
     except ValueError:
+        pass
+    # Accept decimal/hex/octal integer literals (e.g. 2130706433, 0x7f000001).
+    stripped = host.strip("[]")
+    try:
+        as_int = int(stripped, 0) if stripped.lower().startswith("0x") else int(stripped)
+    except ValueError:
+        as_int = None
+    if as_int is not None and 0 <= as_int <= 0xFFFFFFFF:
+        return ipaddress.ip_address(as_int)
+    # Dotted forms with octal/hex octets (e.g. 0177.0.0.1).
+    parts = stripped.split(".")
+    if len(parts) == 4:
+        try:
+            octets = [int(part, 0) if part.lower().startswith("0x") else int(part, 8 if part.startswith("0") and part != "0" else 10) for part in parts]
+        except ValueError:
+            return None
+        if all(0 <= octet <= 255 for octet in octets):
+            return ipaddress.IPv4Address(bytes(octets))
+    return None
+
+
+def _is_private_ip(host: str) -> bool:
+    ip = _normalize_ip(host)
+    if ip is None:
         return False
-    return ip.is_private or ip.is_loopback or ip.is_link_local
+    if (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    ):
+        return True
+    return ip.version == 4 and ip in _CGNAT_NETWORK
+
+
+DNS_TIMEOUT_SECONDS = 5.0
 
 
 def _resolve_host_ips(host: str) -> list[str] | None:
+    previous = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(DNS_TIMEOUT_SECONDS)
     try:
-        return sorted({item[4][0] for item in socket.getaddrinfo(host, None)})
-    except socket.gaierror:
+        return sorted({str(item[4][0]) for item in socket.getaddrinfo(host, None)})
+    except (TimeoutError, socket.gaierror, UnicodeError, OSError):
         return None
+    finally:
+        socket.setdefaulttimeout(previous)
 
 
 def _is_cloud_metadata_host(host: str) -> bool:
@@ -242,12 +357,13 @@ def _path_relative_to_base(path: str, base_dir: Path | None) -> Path:
     return base_dir / candidate
 
 
+MISSING = object()
+
+
 def _get_path(data: dict[str, Any], path: str) -> Any:
     current: Any = data
     for part in path.split("."):
-        if not isinstance(current, dict):
-            return None
-        current = current.get(part)
-        if current is None:
-            return None
+        if not isinstance(current, dict) or part not in current:
+            return MISSING
+        current = current[part]
     return current

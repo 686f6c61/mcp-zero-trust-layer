@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field
 
 from mcp_zero_trust_layer.identity import Identity
 
-
 Direction = Literal["inbound", "outbound"]
 
 

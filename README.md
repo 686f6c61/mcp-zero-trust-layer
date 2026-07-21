@@ -41,7 +41,9 @@ The core path is implemented. The package has a CLI, YAML config validation, HTT
 
 The HTTP runtime supports MCP Streamable HTTP POST with JSON responses. GET SSE streams are not implemented in this release; the endpoint returns HTTP 405 for GET, which is allowed when a server does not offer an SSE stream. Request-scoped upstream SSE passthrough is intentionally left for a later release because streaming needs a separate security design.
 
-Security hardening is already part of the preview. Production configs reject fail-open `dry_run` by default, require default deny, require a public base URL or trusted hosts, and require issuer/audience for JWT and OIDC. Shared-key auth does not trust caller-supplied identity headers unless explicitly configured. Request and upstream response sizes are bounded. Upstream error bodies are truncated and redacted. Output policies apply to JSON-RPC `result` and `error` payloads. Approval decisions are auditable. Production disables FastAPI docs and OpenAPI routes.
+Security hardening is already part of the preview. Production configs reject fail-open `dry_run` by default, require default deny, require a public base URL or trusted hosts, and require issuer/audience for JWT and OIDC. Shared-key auth does not trust caller-supplied identity headers unless explicitly configured. Request and upstream response sizes are bounded. Upstream error bodies are truncated and redacted. Output policies apply to JSON-RPC `result` and `error` payloads. Approvals are single use and the approval UI authenticates decisions and enforces separation of duties. The audit chain can be keyed with an HMAC secret. Output redaction can target values inside text with `redact_patterns`. Approval decisions are auditable. Production disables FastAPI docs and OpenAPI routes.
+
+The codebase ships with 100% test coverage enforced in CI, plus `ruff` linting and `mypy` type checking as required gates.
 
 ## Why This Project Exists
 
@@ -576,9 +578,11 @@ policies:
         - email
         - phone
         - api_key
+      redact_patterns:
+        - "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"
 ```
 
-This policy allows `crm.get_customer` to run, then redacts sensitive fields from the upstream response. Output policies apply to JSON-RPC errors too, which matters when upstream servers put details or traces inside error payloads.
+This policy allows `crm.get_customer` to run, then redacts sensitive data from the upstream response. `redact_fields` removes whole fields by key, while `redact_patterns` catches values such as an email address embedded inside a tool result text blob, where there is no discrete field to target. Output policies apply to JSON-RPC errors too, which matters when upstream servers put details or traces inside error payloads.
 
 ### Match Identity From JWT Or OIDC
 
@@ -623,7 +627,9 @@ Do not treat dry run as production enforcement. Production rejects `dry_run: tru
 
 Validators run before upstream calls and are tied to policies. They are intentionally deterministic and local. They do not call a model, and they do not contact external services except for DNS resolution in the URL validator.
 
-`sql_read_only` checks a SQL string and blocks destructive statements. `filesystem_path` resolves and constrains paths. `url` blocks unsafe schemes and network targets. `email` checks recipients and attachments. `regex` checks a field with allow or deny patterns. `required_forbidden_fields` enforces structural argument expectations. `max_field_bytes` prevents oversized field values.
+`sql_read_only` checks a SQL string and only permits single `SELECT`, `WITH` or `EXPLAIN` statements. It rejects stacked statements, MySQL executable comments (`/*! ... */`), a broad destructive-keyword list and host-reaching functions such as `load_extension` and `COPY ... TO PROGRAM`. `filesystem_path` resolves and constrains paths, blocks a set of sensitive defaults (including `~/.ssh`, `~/.aws`, `/proc`, `/root`) and compares case-insensitively so `/ETC` is still caught on case-insensitive filesystems. `url` blocks unsafe schemes and network targets, including IPs written in decimal, hex or octal form, and the CGNAT range. `email` checks recipients and attachments. `regex` checks a field with allow or deny patterns and fails closed on an invalid pattern. `required_forbidden_fields` enforces structural argument expectations. `max_field_bytes` prevents oversized field values. Any validator that raises while evaluating fails closed rather than allowing the call.
+
+`sql_read_only` reduces the risk of a permissive upstream, but it is a defensive filter, not a full SQL parser. Keep the upstream database credential scoped to read-only as the primary control.
 
 The `input` policy block covers the common structural cases directly on the policy. Named validators remain useful when the rule has domain logic, such as parsing SQL, resolving filesystem paths or rejecting private network URLs.
 
@@ -635,13 +641,17 @@ Output enforcement is the second half of the product. It is not enough to decide
 
 MCPZT evaluates output after the upstream responds. If a matching output policy denies the response, the client receives a controlled MCPZT error instead of the upstream data. If a matching output policy redacts the response, selected fields are replaced with `[REDACTED]`. If a policy limits output size or includes only selected fields, MCPZT transforms the response before returning it.
 
+Redaction works at two levels. `redact_fields` replaces whole JSON fields by key at any depth. `redact_patterns` replaces substrings that match a regular expression inside string values, which is what you need for MCP tool results where the sensitive data lives inside a `content[].text` blob rather than in a discrete field. Use `redact_patterns` for emails, phone numbers, card-like sequences or secret formats that can appear in free text.
+
 Output enforcement applies to JSON-RPC `result` and JSON-RPC `error`. That detail matters because upstream servers sometimes include stack traces, SQL errors, internal IDs or tokens in error payloads.
 
 ## Approvals
 
 Approvals are for actions that are allowed in principle but should not execute automatically. MCPZT creates an approval only because a policy evaluates to `require_approval`; it does not invent approvals from hidden heuristics.
 
-The first call stops before upstream and returns a controlled JSON-RPC error containing an `approval_id`. A human can inspect the approval request with the CLI. The approval record includes the policy, server, capability, identity and a hash of the arguments. When the client retries with `_mcpzt_approval_id`, MCPZT verifies that the retry still matches the original approval.
+The first call stops before upstream and returns a controlled JSON-RPC error containing an `approval_id`. A human can inspect the approval request with the CLI. The approval record includes the policy, server, method, capability, identity and a hash of the arguments. When the client retries with `_mcpzt_approval_id`, MCPZT verifies that the retry still matches the original approval.
+
+Approvals are single use. The first valid retry is executed and the approval is atomically marked consumed in the same locked step, so the same `approval_id` cannot be replayed to run a high-risk action repeatedly within its TTL. Any later retry returns a fresh `require_approval` error.
 
 ```bash
 mcpzt approve list --config mcpzt.yaml
@@ -667,7 +677,7 @@ approvals:
   webhook_strict: false
 ```
 
-With `webhook_strict: false`, MCPZT keeps enforcing policy even if the notification endpoint is temporarily unavailable. With strict mode, webhook delivery failure is treated as an operational failure.
+With `webhook_strict: false`, MCPZT keeps enforcing policy even if the notification endpoint is temporarily unavailable. Delivery failures are always logged to stderr so an outage of the alerting channel is never silent. With strict mode, webhook delivery failure is treated as an operational failure.
 
 For local projects and very small deployments, the default JSON approval store is simple and transparent. For team environments, use the SQLite backend. It keeps the same approval model and CLI, but stores approvals in a database file with indexed reads and writes. This is a better default for long-lived gateways, approval dashboards and operational review.
 
@@ -678,11 +688,13 @@ approvals:
   default_ttl_seconds: 900
 ```
 
-The approval UI is optional. It is self-hosted and reads the same approval store as the gateway. Run it on localhost for local review, or put it behind your existing internal authentication layer for team use.
+The approval UI is optional. It is self-hosted and reads the same approval store as the gateway. It binds to `127.0.0.1` by default.
 
 ```bash
 mcpzt approve serve --config mcpzt.yaml --host 127.0.0.1 --port 8770
 ```
+
+The UI authenticates every decision with the project `auth` configuration: with `auth.mode: jwt` or `oidc`, an approver must present a valid token, and the recorded `decided_by` is taken from the authenticated identity, never from the request body. When `approvals.require_separation_of_duties` is enabled (the default), the identity that triggered a call cannot approve its own request. Terminal decisions are immutable, so a denied approval cannot later be flipped to approved. Configure `auth` before exposing the UI beyond localhost.
 
 The UI is deliberately small: it lists pending approvals, shows server, capability, policy and subject, and lets an operator approve or deny. For deeper workflow integration, use `mcpzt approve list --format json`, the approval API exposed by the UI, or approval webhooks.
 
@@ -856,7 +868,7 @@ Each policy decision includes timestamp, event ID, correlation ID, identity, ser
 mcpzt audit tail --config mcpzt.yaml
 ```
 
-Secret-like keys and bearer-style strings are redacted recursively before write. Redaction applies to audit records and to sanitized upstream errors. In production, keep audit logs on protected storage and keep `audit.strict: true` so audit write failures fail closed.
+Secret-like keys and secret-shaped values are redacted recursively before write, covering common key names plus bearer tokens, `AKIA` access keys, JWTs and PEM private-key blocks. Redaction applies to audit records and to sanitized upstream errors. Audit files are created with `0600` permissions and appended under an exclusive lock so concurrent writers cannot fork the hash chain. In production, keep audit logs on protected storage and keep `audit.strict: true` so audit write failures fail closed.
 
 Use audit search when you need to investigate a specific operational question. It reads the configured JSONL audit file and filters by event type, server, decision, policy ID, correlation ID, approval ID and time window. Table output is useful during live review; JSON output is better for scripts and incident notebooks.
 
@@ -866,11 +878,22 @@ mcpzt audit search --config mcpzt.yaml --policy-id critical-actions-need-approva
 mcpzt audit search --config mcpzt.yaml --approval-id appr_xxx --format json
 ```
 
-By default, audit events include a hash chain. Each event stores the previous event hash and its own hash over canonical JSON. This does not replace secure log storage, but it makes accidental or malicious alteration visible during review.
+By default, audit events include a hash chain. Each event stores the previous event hash, a monotonic sequence number and its own hash over canonical JSON. A plain chain makes accidental or malicious alteration visible during review but cannot stop an attacker who can rewrite the whole file. For tamper-evidence against that attacker, set an HMAC key so the per-event hash is keyed and cannot be recomputed without the secret. Keep the key off the log host.
+
+```yaml
+audit:
+  destination: file
+  path: /var/log/mcpzt/audit.jsonl
+  strict: true
+  hash_chain: true
+  hmac_key_env: MCPZT_AUDIT_HMAC_KEY
+```
 
 ```bash
 mcpzt audit verify --config mcpzt.yaml
 ```
+
+`mcpzt audit verify` uses the configured HMAC key automatically when present.
 
 The HTTP runtime also exposes Prometheus-style metrics when `metrics.enabled: true`. The metrics endpoint counts decisions by server, method, decision and policy ID. It deliberately avoids request arguments and output fields so monitoring does not become a second copy of sensitive data.
 

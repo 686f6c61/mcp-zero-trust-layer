@@ -6,6 +6,7 @@ from typing import Annotated, Any
 
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from mcp_zero_trust_layer.config import load_config
@@ -159,15 +160,18 @@ async def _handle_post(
         response.headers["WWW-Authenticate"] = _www_authenticate_header(config, request)
         return response
 
-    response = pipeline.handle(
+    # pipeline.handle performs blocking upstream I/O; offload it so a slow
+    # upstream cannot stall the whole event loop.
+    handled: dict[str, Any] | None = await run_in_threadpool(
+        pipeline.handle,
         server_name,
         payload,
         identity=identity,
         headers=headers,
     )
-    if response is None:
+    if handled is None:
         return Response(status_code=202)
-    return JSONResponse(response)
+    return JSONResponse(handled)
 
 
 def _default_server_name(config: MCPZTConfig) -> str:

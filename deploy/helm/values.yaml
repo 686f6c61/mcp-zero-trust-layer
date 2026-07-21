@@ -2,12 +2,24 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/686f6c61/mcp-zero-trust-layer
-  tag: "0.2.0"
+  tag: "0.3.0"
   pullPolicy: IfNotPresent
 
 service:
   type: ClusterIP
   port: 8765
+
+# Approvals (SQLite) and the audit log live under /var/lib/mcpzt and must survive
+# pod restarts. This is a single-instance gateway, so a ReadWriteOnce volume is
+# the right shape; keep replicaCount at 1 when persistence is enabled.
+persistence:
+  enabled: true
+  # Set to reuse an existing PVC instead of letting the chart create one.
+  existingClaim: ""
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
 
 resources:
   requests:
@@ -26,6 +38,9 @@ secretEnv:
   GITHUB_MCP_TOKEN:
     secretName: mcpzt-secrets
     key: github-token
+  MCPZT_AUDIT_HMAC_KEY:
+    secretName: mcpzt-secrets
+    key: audit-hmac-key
 
 configYaml: |
   project:
@@ -54,6 +69,7 @@ configYaml: |
     destination: file
     path: /var/lib/mcpzt/audit.jsonl
     hash_chain: true
+    hmac_key_env: MCPZT_AUDIT_HMAC_KEY
 
   approvals:
     backend: sqlite

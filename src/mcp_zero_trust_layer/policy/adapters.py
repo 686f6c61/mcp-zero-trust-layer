@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
 from mcp_zero_trust_layer.config.models import PolicyEngineConfig
 from mcp_zero_trust_layer.core import RequestContext
-from mcp_zero_trust_layer.policy.models import PolicyDecision
+from mcp_zero_trust_layer.policy.models import Decision, PolicyDecision
 
 SUPPORTED_DECISIONS = {
     "allow",
@@ -88,7 +88,7 @@ def _decision_from_opa_result(result: Any, *, dry_run: bool = False) -> PolicyDe
         validation_errors = [str(validation_errors)]
 
     return PolicyDecision(
-        decision=decision,
+        decision=cast(Decision, decision),
         policy_id=policy_id,
         reason=reason,
         risk=result.get("risk"),

@@ -18,7 +18,12 @@ class ValidatorEngine:
     def validate(self, validators: list[ValidatorConfig], context: RequestContext) -> ValidatorResult:
         errors: list[str] = []
         for validator in validators:
-            result = self._run_validator(validator, context)
+            try:
+                result = self._run_validator(validator, context)
+            except Exception as exc:  # noqa: BLE001 - fail closed on any validator error
+                result = ValidatorResult.fail(
+                    f"validator {validator.name!r} failed to evaluate: {exc}"
+                )
             errors.extend(result.errors)
         return ValidatorResult(passed=not errors, errors=errors)
 

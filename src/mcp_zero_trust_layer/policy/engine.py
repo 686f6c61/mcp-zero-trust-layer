@@ -1,17 +1,23 @@
 from __future__ import annotations
 
-from fnmatch import fnmatch
+from collections.abc import Sequence
+from fnmatch import fnmatchcase
 from typing import Any
 
 from mcp_zero_trust_layer.capabilities.mapping import lookup_capability_metadata
-from mcp_zero_trust_layer.config.models import MCPZTConfig, PolicyConfig, PolicyMatch
+from mcp_zero_trust_layer.config.models import (
+    CapabilityMetadata,
+    MCPZTConfig,
+    PolicyConfig,
+    PolicyMatch,
+)
 from mcp_zero_trust_layer.core import RequestContext
+from mcp_zero_trust_layer.identity import Identity
 from mcp_zero_trust_layer.policy.adapters import evaluate_external_policy
 from mcp_zero_trust_layer.policy.conditions import evaluate_conditions
 from mcp_zero_trust_layer.policy.models import PolicyDecision
 from mcp_zero_trust_layer.validators import ValidatorEngine
 from mcp_zero_trust_layer.validators.input_policy import validate_input_policy
-
 
 LIST_METHODS = {"tools/list", "resources/list", "prompts/list"}
 
@@ -91,7 +97,7 @@ class PolicyEngine:
         }
 
     def _matching_policies(
-        self, context: RequestContext, metadata: object | None
+        self, context: RequestContext, metadata: CapabilityMetadata | None
     ) -> list[PolicyConfig]:
         return [
             policy
@@ -100,14 +106,14 @@ class PolicyEngine:
             and evaluate_conditions(policy.when, context)
         ]
 
-    def _matches(self, policy: PolicyConfig, context: RequestContext, metadata: object | None) -> bool:
+    def _matches(self, policy: PolicyConfig, context: RequestContext, metadata: CapabilityMetadata | None) -> bool:
         return not self._match_failures(policy, context, metadata)
 
     def _match_report(
         self,
         policy: PolicyConfig,
         context: RequestContext,
-        metadata: object | None,
+        metadata: CapabilityMetadata | None,
     ) -> dict[str, Any]:
         failures = self._match_failures(policy, context, metadata)
         return {"matched": not failures, "failures": failures}
@@ -116,7 +122,7 @@ class PolicyEngine:
         self,
         policy: PolicyConfig,
         context: RequestContext,
-        metadata: object | None,
+        metadata: CapabilityMetadata | None,
     ) -> list[str]:
         match = policy.match
         failures = self._request_match_failures(match, context)
@@ -154,7 +160,7 @@ class PolicyEngine:
             match.tags,
         ]
 
-    def _metadata_match_failures(self, match: PolicyMatch, metadata: object | None) -> list[str]:
+    def _metadata_match_failures(self, match: PolicyMatch, metadata: CapabilityMetadata | None) -> list[str]:
         metadata_requirements = self._metadata_requirements(match)
         if metadata is None and any(metadata_requirements):
             return ["capability metadata is missing"]
@@ -200,7 +206,7 @@ class PolicyEngine:
     def _selected_decision(
         self,
         selected: PolicyConfig,
-        metadata: object | None,
+        metadata: CapabilityMetadata | None,
         matching: list[PolicyConfig],
     ) -> PolicyDecision:
         return PolicyDecision(
@@ -213,7 +219,7 @@ class PolicyEngine:
             metadata={"matched_policies": [policy.id for policy in matching]},
         )
 
-    def _default_decision(self, metadata: object | None) -> PolicyDecision:
+    def _default_decision(self, metadata: CapabilityMetadata | None) -> PolicyDecision:
         return PolicyDecision(
             decision=self.config.runtime.default_decision,
             reason=f"default decision: {self.config.runtime.default_decision}",
@@ -225,7 +231,7 @@ class PolicyEngine:
         self,
         selected: PolicyConfig,
         context: RequestContext,
-        metadata: object | None,
+        metadata: CapabilityMetadata | None,
         matching: list[PolicyConfig],
         errors: list[str],
     ) -> PolicyDecision:
@@ -271,7 +277,7 @@ def _exact_failure(label: str, actual: object, expected: object | None) -> str |
 
 
 def _method_failure(actual: str, expected: str | None) -> str | None:
-    if expected and not fnmatch(actual, expected):
+    if expected and not fnmatchcase(actual, expected):
         return f"method {actual!r} does not match {expected!r}"
     return None
 
@@ -289,16 +295,18 @@ def _patterns_failure(actual: str | None, patterns: list[str]) -> str | None:
 
 
 def _matches_pattern(actual: str | None, pattern: str) -> bool:
-    return actual is not None and fnmatch(actual, pattern)
+    return actual is not None and fnmatchcase(actual, pattern)
 
 
-def _identity_user_failure(match: PolicyMatch, identity: object) -> str | None:
+def _identity_user_failure(match: PolicyMatch, identity: Identity) -> str | None:
     if match.user and match.user not in {identity.subject, identity.email}:
         return f"user {identity.subject!r} or email {identity.email!r} did not match"
     return None
 
 
-def _contains_failure(label: str, expected: object | None, values: list[object]) -> str | None:
+def _contains_failure(
+    label: str, expected: object | None, values: Sequence[object]
+) -> str | None:
     if expected and expected not in values:
         return f"{label} {expected!r} not present"
     return None

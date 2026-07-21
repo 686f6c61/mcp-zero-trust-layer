@@ -10,7 +10,6 @@ from mcp_zero_trust_layer.capabilities.discovery import CapabilitySnapshot
 from mcp_zero_trust_layer.cli import main as cli_main
 from mcp_zero_trust_layer.cli.main import app
 
-
 runner = CliRunner()
 
 
@@ -576,6 +575,67 @@ def test_demo_writes_runnable_demo_files(tmp_path: Path) -> None:
     assert (output / "run_demo.sh").exists()
     assert "demo.safe_echo" in (output / "mcpzt.yaml").read_text(encoding="utf-8")
     assert 'cd "$DIR"' in (output / "run_demo.sh").read_text(encoding="utf-8")
+
+
+def test_free_port_returns_preferred_when_available() -> None:
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        free = probe.getsockname()[1]
+    # The preferred port is free now, so it should be returned unchanged.
+    assert cli_main._free_port(free) == free
+
+
+def test_free_port_skips_avoided_and_taken_ports() -> None:
+    import socket
+
+    # A port listed in `avoid` is never returned.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        free = probe.getsockname()[1]
+    assert cli_main._free_port(free, avoid={free}) != free
+
+    # A port that cannot be bound falls back to an OS-assigned free port.
+    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    holder.bind(("127.0.0.1", 0))
+    holder.listen(1)
+    taken = holder.getsockname()[1]
+    try:
+        assert cli_main._free_port(taken) != taken
+    finally:
+        holder.close()
+
+
+def test_demo_picks_a_free_upstream_port_when_default_is_taken(tmp_path: Path) -> None:
+    import socket
+
+    # Occupy the default upstream port so the demo must pick another.
+    blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        blocker.bind(("127.0.0.1", 3001))
+        blocker.listen(1)
+        taken = True
+    except OSError:
+        taken = False  # 3001 already busy on this host; the demo still avoids it
+
+    try:
+        output = tmp_path / "demo"
+        result = runner.invoke(app, ["demo", "--output", str(output)])
+        assert result.exit_code == 0
+        config = (output / "mcpzt.yaml").read_text(encoding="utf-8")
+        runner_sh = (output / "run_demo.sh").read_text(encoding="utf-8")
+        fake = (output / "fake_mcp.py").read_text(encoding="utf-8")
+
+        # No unreplaced placeholders leak into the generated files.
+        for text in (config, runner_sh, fake, (output / "demo_client.py").read_text()):
+            assert "__UPSTREAM_PORT__" not in text
+            assert "__GATEWAY_PORT__" not in text
+        if taken:
+            assert "127.0.0.1:3001/mcp" not in config
+    finally:
+        blocker.close()
 
 
 def test_scan_exits_two_for_high_findings(tmp_path: Path) -> None:
