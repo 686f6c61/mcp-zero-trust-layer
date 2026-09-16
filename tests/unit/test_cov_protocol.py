@@ -18,6 +18,7 @@ def test_message_classification() -> None:
     assert is_notification({"method": "x"})
     assert is_response({"id": 1, "result": {}})
     assert not is_response({"id": 1})
+    assert is_response({"error": {"code": -32700, "message": "Parse error"}})
 
 
 def test_success_and_error_response() -> None:

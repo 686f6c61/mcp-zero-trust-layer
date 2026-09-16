@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 from uuid import uuid4
 
@@ -16,7 +18,6 @@ from mcp_zero_trust_layer.protocol import (
     JSONRPCError,
     error_response,
     is_notification,
-    is_request,
     is_response,
 )
 from mcp_zero_trust_layer.protocol.jsonrpc import require_jsonrpc_message
@@ -37,11 +38,7 @@ CALL_METHODS = {
 SAFE_NOTIFICATION_METHODS = {
     "notifications/initialized",
     "notifications/cancelled",
-    "notifications/progress",
     "notifications/roots/list_changed",
-    "notifications/tools/list_changed",
-    "notifications/resources/list_changed",
-    "notifications/prompts/list_changed",
 }
 
 UPSTREAM_NO_RESPONSE = "Upstream returned no response"
@@ -72,12 +69,12 @@ class MCPPipeline:
         identity: Identity | None = None,
         headers: dict[str, str] | None = None,
     ) -> dict[str, Any] | None:
-        request_id = message.get("id")
+        request_id = message.get("id") if isinstance(message, dict) else None
         try:
             message = require_jsonrpc_message(message)
             server = self._server(server_name)
             if is_response(message):
-                return self._forward_notification(server, message, headers=headers)
+                raise JSONRPCError(-32600, "Unsolicited responses are not supported")
             if is_notification(message):
                 return self._handle_notification(
                     server,
@@ -85,8 +82,6 @@ class MCPPipeline:
                     identity=identity or Identity(environment=self.config.project.environment),
                     headers=headers,
                 )
-            if not is_request(message):
-                return self.upstream.send(server, message, headers=headers)
             return self._handle_request(
                 server,
                 message,
@@ -109,6 +104,11 @@ class MCPPipeline:
         context = self._context_for_message(server.name, message, identity=identity)
         decision = self.policy_engine.evaluate(context)
 
+        if decision.decision == "require_approval" and not decision.dry_run and method not in CALL_METHODS:
+            # No generic approval/retry contract exists for extension/list methods.
+            self._log_decision(context, decision, upstream_called=False)
+            return self._deny_response(request_id, decision)
+
         if method in LIST_RESULT_KEYS:
             return self._handle_list_request(
                 server, message, identity, headers, context, decision, request_id
@@ -130,11 +130,10 @@ class MCPPipeline:
         request_id: Any,
     ) -> dict[str, Any]:
         method = message["method"]
-        if decision.decision in {"deny", "hide"} and decision.policy_id and not decision.dry_run:
+        if decision.decision in {"deny", "hide"} and not decision.metadata.get("implicit_default") and not decision.dry_run:
             self._log_decision(context, decision, upstream_called=False)
             return self._deny_response(request_id, decision)
-        upstream_response = self.upstream.send(server, message, headers=headers)
-        self._log_decision(context, decision, upstream_called=True)
+        upstream_response = self._dispatch(server, message, headers, context, decision)
         if upstream_response is None:
             return _upstream_no_response(request_id)
         if self.config.runtime.dry_run:
@@ -172,6 +171,7 @@ class MCPPipeline:
         if approval_id and decision.policy_id and self.approvals.consume_if_valid(
             approval_id, context, decision.policy_id
         ):
+            context.metadata["approval_id"] = approval_id
             approved_message = _strip_approval_id(message)
             return self._send_and_enforce_output(
                 server, approved_message, headers, context, decision, request_id
@@ -213,8 +213,7 @@ class MCPPipeline:
         if decision.decision in {"deny", "hide"} and not decision.dry_run:
             self._log_decision(context, decision, upstream_called=False)
             return self._deny_response(request_id, decision)
-        upstream_response = self.upstream.send(server, message, headers=headers)
-        self._log_decision(context, decision, upstream_called=True)
+        upstream_response = self._dispatch(server, message, headers, context, decision)
         return upstream_response or _upstream_no_response(request_id)
 
     def _send_and_enforce_output(
@@ -226,11 +225,35 @@ class MCPPipeline:
         decision: PolicyDecision,
         request_id: Any,
     ) -> dict[str, Any]:
-        upstream_response = self.upstream.send(server, message, headers=headers)
-        self._log_decision(context, decision, upstream_called=True)
+        upstream_response = self._dispatch(server, message, headers, context, decision)
         if upstream_response is None:
             return _upstream_no_response(request_id)
         return self._enforce_output(context, upstream_response, request_id)
+
+    def _dispatch(
+        self,
+        server: ServerConfig,
+        message: dict[str, Any],
+        headers: dict[str, str] | None,
+        context: RequestContext,
+        decision: PolicyDecision,
+    ) -> dict[str, Any] | None:
+        # Persist intent before crossing the side-effect boundary. A failed outcome
+        # write cannot undo a tool action; callers must not infer safe retry.
+        self.audit.log_decision(
+            context, decision, upstream_called=False, upstream_status="dispatch_intent",
+            approval_id=context.metadata.get("approval_id"),
+        )
+        try:
+            response = self.upstream.send(server, message, headers=headers)
+        except Exception:
+            self._log_decision(context, decision, upstream_called=True, upstream_status="unknown")
+            raise
+        self._log_decision(
+            context, decision, upstream_called=True,
+            upstream_status="response_received" if response is not None else "accepted",
+        )
+        return response
 
     def _handle_notification(
         self,
@@ -241,26 +264,17 @@ class MCPPipeline:
         headers: dict[str, str] | None,
     ) -> dict[str, Any] | None:
         method = message.get("method", "")
-        if method in SAFE_NOTIFICATION_METHODS:
-            return self.upstream.send(server, message, headers=headers)
-
         context = self._context_for_message(server.name, message, identity=identity)
+        if method in SAFE_NOTIFICATION_METHODS:
+            self._dispatch(server, message, headers, context, PolicyDecision(decision="allow", reason="client protocol notification"))
+            return None
+
         decision = self.policy_engine.evaluate(context)
         if decision.decision in {"deny", "hide", "require_approval"} and not decision.dry_run:
             self._log_decision(context, decision, upstream_called=False)
             return None
-        response = self.upstream.send(server, message, headers=headers)
-        self._log_decision(context, decision, upstream_called=True)
-        return response
-
-    def _forward_notification(
-        self,
-        server: ServerConfig,
-        message: dict[str, Any],
-        *,
-        headers: dict[str, str] | None,
-    ) -> dict[str, Any] | None:
-        return self.upstream.send(server, message, headers=headers)
+        self._dispatch(server, message, headers, context, decision)
+        return None
 
     def _filter_list_response(
         self,
@@ -308,19 +322,21 @@ class MCPPipeline:
             update={"direction": "outbound", "output": output_payload}
         )
         decision = self.policy_engine.evaluate(output_context)
-        if decision.policy_id:
+        if not decision.metadata.get("implicit_default"):
             self._log_decision(output_context, decision)
         if decision.dry_run:
             return upstream_response
-        if decision.decision == "deny" and decision.policy_id:
+        if (decision.decision in {"deny", "hide"} or (decision.decision == "require_approval" and self.config.policy_engine.adapter != "builtin")) and not decision.metadata.get("implicit_default"):
             return error_response(
                 request_id,
                 -32020,
                 "Output blocked by policy",
                 {"policy_id": decision.policy_id, "reason": decision.reason},
             )
-        if decision.decision in {"redact", "limit", "transform"} and decision.policy_id:
-            policy = self._policy_by_id(decision.policy_id)
+        if decision.decision in {"redact", "limit", "transform"}:
+            policy = self._policy_by_id(decision.policy_id) if decision.policy_id else None
+            if policy is None or (self.config.policy_engine.adapter != "builtin" and policy.output is None):
+                return error_response(request_id, -32020, "Output enforcement policy is not configured")
             if policy:
                 allowed, transformed, reason = self.output_enforcer.enforce(
                     output_payload, policy
@@ -348,7 +364,9 @@ class MCPPipeline:
         params: dict[str, Any] = raw_params if isinstance(raw_params, dict) else {}
         capability_type = "method"
         capability = method
-        arguments: dict[str, Any] = {}
+        arguments: dict[str, Any] = {
+            key: value for key, value in params.items() if key != "_mcpzt_approval_id"
+        }
 
         if method in CALL_METHODS:
             mapped_type, capability_key, arguments_key = CALL_METHODS[method]
@@ -369,7 +387,7 @@ class MCPPipeline:
         elif method in LIST_RESULT_KEYS:
             capability_type = "method"
             capability = method
-            arguments = params
+            arguments = {key: value for key, value in params.items() if key != "_mcpzt_approval_id"}
 
         return RequestContext(
             server=server_name,
@@ -381,6 +399,12 @@ class MCPPipeline:
             environment=self.config.project.environment,
             correlation_id=f"corr_{uuid4().hex}",
             config_base_dir=self.config.config_base_dir,
+            metadata={"request_binding": hashlib.sha256(json.dumps({
+                "params": _strip_approval_id(message).get("params", {}),
+                "server": self._server(server_name).model_dump(mode="json"),
+                "policies": [policy.model_dump(mode="json") for policy in self.config.policies],
+                "policy_engine": self.config.policy_engine.model_dump(mode="json"),
+            }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()},
         )
 
     def _server(self, name: str) -> ServerConfig:
@@ -405,6 +429,7 @@ class MCPPipeline:
             decision,
             upstream_called=upstream_called,
             upstream_status=upstream_status,
+            approval_id=context.metadata.get("approval_id"),
         )
         if self.metrics:
             self.metrics.record_decision(context, decision)

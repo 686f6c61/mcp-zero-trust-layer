@@ -57,22 +57,22 @@ def _allow(policy_id: str, match: dict[str, Any], **extra: Any) -> dict[str, Any
 IDENTITY = Identity(subject="ana")
 
 
-def test_handle_response_message_is_forwarded() -> None:
+def test_unsolicited_response_is_rejected_before_upstream() -> None:
     upstream = ConfigurableUpstream()
     pipeline = MCPPipeline(_config([]), upstream)
     result = pipeline.handle(
         "github", {"jsonrpc": "2.0", "id": 5, "result": {"data": 1}}, identity=IDENTITY
     )
-    # A response object (no method) is forwarded verbatim to the upstream.
-    assert upstream.messages[0]["result"] == {"data": 1}
-    assert result == {"jsonrpc": "2.0", "id": 5, "result": {"ok": True}}
+    assert upstream.messages == []
+    assert result["error"]["code"] == -32600
 
 
-def test_handle_message_without_method_forwards_to_upstream() -> None:
+def test_invalid_message_without_method_is_rejected() -> None:
     upstream = ConfigurableUpstream(by_method={None: {"jsonrpc": "2.0", "id": 9, "result": {}}})
     pipeline = MCPPipeline(_config([]), upstream)
     result = pipeline.handle("github", {"jsonrpc": "2.0", "id": 9}, identity=IDENTITY)
-    assert result == {"jsonrpc": "2.0", "id": 9, "result": {}}
+    assert result["error"]["code"] == -32600
+    assert upstream.messages == []
 
 
 def test_handle_unknown_server_returns_error() -> None:

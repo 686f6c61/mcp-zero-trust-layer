@@ -18,9 +18,45 @@ on:
         default: true
         type: boolean
 
+permissions:
+  contents: read
+
 jobs:
+  resolve:
+    name: Resolve and validate requested source
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - name: Validate version and freeze commit
+        id: source
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          python - <<'PY'
+          import os, re, tomllib
+          from pathlib import Path
+          version = os.environ['RELEASE_VERSION']
+          assert re.fullmatch(r'0|[1-9][0-9]*', version.split('.')[0]) and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version), 'Expected a stable X.Y.Z version'
+          assert tomllib.loads(Path('pyproject.toml').read_text())['project']['version'] == version, 'Container version differs from source'
+          PY
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  verify:
+    name: Full container release verification
+    needs: [resolve]
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+      expected_version: ${{ inputs.version }}
+
   publish-container:
     name: Publish multi-arch container image
+    needs: [resolve, verify]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -30,7 +66,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -45,16 +82,19 @@ jobs:
       - name: Prepare tags
         id: tags
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          PUBLISH_LATEST: ${{ inputs.latest }}
         run: |
           set -euo pipefail
-          version="${{ inputs.version }}"
+          version="$RELEASE_VERSION"
           minor="${version%.*}"
           image="ghcr.io/${GITHUB_REPOSITORY}"
           {
             echo "tags<<EOF"
             echo "${image}:${version}"
             echo "${image}:${minor}"
-            if [ "${{ inputs.latest }}" = "true" ]; then
+            if [ "$PUBLISH_LATEST" = "true" ]; then
               echo "${image}:latest"
             fi
             echo "EOF"
@@ -71,4 +111,6 @@ jobs:
           sbom: true
 
       - name: Inspect published image
-        run: docker buildx imagetools inspect ghcr.io/${{ github.repository }}:${{ inputs.version }}
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: docker buildx imagetools inspect "ghcr.io/${GITHUB_REPOSITORY}:${RELEASE_VERSION}"

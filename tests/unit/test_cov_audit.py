@@ -41,7 +41,7 @@ def test_stdout_destination_with_hash_chain(capsys) -> None:
     )
     printed = json.loads(capsys.readouterr().out.strip())
     assert printed["event_hash"]
-    assert printed["sequence"] == 0
+    assert printed["sequence"] == 1
 
 
 def test_log_approval_event(tmp_path: Path) -> None:

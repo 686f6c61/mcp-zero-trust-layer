@@ -4,6 +4,7 @@ import ipaddress
 import os
 import re
 import socket
+from email.headerregistry import Address
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -15,22 +16,18 @@ FORBIDDEN_SQL_RE = re.compile(
     r"DROP|DELETE|UPDATE|INSERT|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|MERGE|CALL|EXEC|EXECUTE|"
     r"ATTACH|DETACH|COPY|PRAGMA|VACUUM|REPLACE|LOAD|SET|PREPARE|DEALLOCATE|DO|HANDLER|"
     r"REINDEX|ANALYZE|LOCK|UNLOCK|RENAME|IMPORT|INSTALL|KILL|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|"
-    r"INTO"
+    r"INTO|NEXT|FOR"
     r")\b",
     re.IGNORECASE,
 )
-# Functions that read/write the host or load native code even from a SELECT.
-FORBIDDEN_SQL_FUNCTION_RE = re.compile(
-    r"\b("
-    r"load_extension|readfile|writefile|sys_exec|sys_eval|xp_cmdshell|"
-    r"lo_import|lo_export|pg_read_file|pg_read_binary_file|pg_ls_dir|dblink|"
-    r"load_file|into_outfile|into_dumpfile"
-    r")\b",
-    re.IGNORECASE,
-)
-SQL_BLOCK_COMMENT_RE = re.compile(r"/\*[^*]*\*+(?:[^/*][^*]*\*+)*/")
-# MySQL executes the body of version/optimizer comments (/*! ... */, /*+ ... */).
-SQL_EXECUTABLE_COMMENT_RE = re.compile(r"/\*[!+]")
+# Deliberately small portable subset. Database read-only permissions remain required.
+SAFE_SQL_FUNCTIONS = {
+    "abs", "avg", "ceil", "ceiling", "coalesce", "count", "floor", "length", "lower",
+    "ltrim", "max", "min", "nullif", "round", "rtrim", "substr", "substring", "sum",
+    "trim", "upper",
+}
+SQL_PAREN_KEYWORDS = {"select", "as", "in", "exists", "not", "and", "or", "where", "on", "having"}
+SQL_FUNCTION_RE = re.compile(r'((?:[\w"$]+\s*\.\s*)*[\w"$]+)\s*\(', re.UNICODE)
 CLOUD_METADATA_HOSTS = {
     str(ipaddress.IPv4Address(0xA9FEA9FE)),
     "metadata.google.internal",
@@ -57,19 +54,21 @@ def validate_sql_read_only(arguments: dict[str, Any], options: dict[str, Any]) -
     if not isinstance(query, str) or not query.strip():
         return ValidatorResult.fail("sql_read_only could not find a SQL string")
 
-    if SQL_EXECUTABLE_COMMENT_RE.search(query):
-        return ValidatorResult.fail("sql_read_only blocked an executable SQL comment")
-
-    normalized = _strip_sql_comments(query).strip()
+    try:
+        normalized = _sql_code(query).strip()
+    except ValueError as exc:
+        return ValidatorResult.fail(f"sql_read_only blocked unsupported SQL: {exc}")
     statements = _split_sql_statements(normalized)
     if len(statements) > 1:
         return ValidatorResult.fail("sql_read_only blocked multiple SQL statements")
     if FORBIDDEN_SQL_RE.search(normalized):
         return ValidatorResult.fail("sql_read_only blocked a destructive SQL keyword")
-    if FORBIDDEN_SQL_FUNCTION_RE.search(normalized):
-        return ValidatorResult.fail("sql_read_only blocked a dangerous SQL function")
     if not re.match(r"^(SELECT|WITH|EXPLAIN)\b", normalized, flags=re.IGNORECASE):
         return ValidatorResult.fail("sql_read_only only allows SELECT, WITH, or EXPLAIN statements")
+    for match in SQL_FUNCTION_RE.finditer(normalized):
+        name = match.group(1).lower()
+        if name not in SAFE_SQL_FUNCTIONS | SQL_PAREN_KEYWORDS:
+            return ValidatorResult.fail("sql_read_only blocked an unsupported SQL function or syntax")
     return ValidatorResult.ok()
 
 
@@ -136,12 +135,19 @@ def validate_email(arguments: dict[str, Any], options: dict[str, Any]) -> Valida
     else:
         return ValidatorResult.fail("email validator could not read recipients")
 
-    allowed_domains = set(options.get("allowed_domains", []))
-    blocked_domains = set(options.get("blocked_domains", []))
+    allowed_domains = {str(domain).lower() for domain in options.get("allowed_domains", [])}
+    blocked_domains = {str(domain).lower() for domain in options.get("blocked_domains", [])}
     for recipient in recipients:
-        if not isinstance(recipient, str) or "@" not in recipient:
+        if not isinstance(recipient, str) or any(char in recipient for char in "\r\n"):
             return ValidatorResult.fail("email validator found invalid recipient")
-        domain = recipient.rsplit("@", 1)[1].lower()
+        try:
+            mailbox = Address(addr_spec=recipient)
+        except Exception:
+            # Treat every parser failure as invalid untrusted input, never a 500.
+            return ValidatorResult.fail("email validator found invalid recipient")
+        domain = mailbox.domain.lower()
+        if not mailbox.username or not domain or mailbox.addr_spec != recipient.strip():
+            return ValidatorResult.fail("email validator found invalid recipient")
         if domain in blocked_domains:
             return ValidatorResult.fail("email validator blocked recipient domain")
         if allowed_domains and domain not in allowed_domains:
@@ -206,9 +212,49 @@ def _first_value(arguments: dict[str, Any], keys: list[str | None]) -> Any:
     return None
 
 
-def _strip_sql_comments(query: str) -> str:
-    without_line_comments = re.sub(r"--.*$", "", query, flags=re.MULTILINE)
-    return SQL_BLOCK_COMMENT_RE.sub("", without_line_comments)
+def _sql_code(query: str) -> str:
+    """Mask strings/comments using one lexer, keeping SQL structure and identifiers.
+
+    ANSI doubled quotes are supported; dialect-dependent escapes are rejected.
+    """
+    code: list[str] = []
+    position = 0
+    while position < len(query):
+        char = query[position]
+        if query.startswith("--", position):
+            newline = query.find("\n", position + 2)
+            position = len(query) if newline < 0 else newline + 1
+            code.append(" ")
+        elif query.startswith("/*", position):
+            end = query.find("*/", position + 2)
+            if end < 0 or query[position + 2 : position + 3] in {"!", "+"}:
+                raise ValueError("unterminated or executable comment")
+            if "/*" in query[position + 2 : end]:
+                raise ValueError("nested comments are not supported")
+            code.append(" ")
+            position = end + 2
+        elif char in "'\"":
+            start = position
+            position += 1
+            while position < len(query):
+                if query[position] == "\\":
+                    raise ValueError("backslash escapes are not supported")
+                if query[position] == char:
+                    if query[position : position + 2] == char * 2:
+                        position += 2
+                        continue
+                    position += 1
+                    break
+                position += 1
+            else:
+                raise ValueError("unterminated quoted value")
+            code.append(" " if char == "'" else query[start:position])
+        elif char in "`[]$\\#" or (ord(char) < 32 and not char.isspace()):
+            raise ValueError("dialect-dependent quoting or control character")
+        else:
+            code.append(char)
+            position += 1
+    return "".join(code)
 
 
 def _split_sql_statements(query: str) -> list[str]:

@@ -11,3 +11,6 @@ include docs/PYPI_RELEASE.md
 recursive-include examples *.yaml
 recursive-include deploy *.yaml
 recursive-include deploy *.tpl
+include docs/CLIENT_COMPATIBILITY.md
+include docs/VALIDATOR_LIMITS.md
+include docs/SUPPORTED_PROFILE.md

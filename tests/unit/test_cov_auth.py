@@ -133,9 +133,9 @@ def test_jwt_unknown_subject_and_header_fallbacks() -> None:
         source_ip=None,
     )
     assert identity.subject == "unknown"
-    assert identity.client_id == "cli"
-    assert identity.agent_id == "agent"
-    assert identity.session_id == "sess"
+    assert identity.client_id is None
+    assert identity.agent_id is None
+    assert identity.session_id is None
 
 
 # ---- OIDC discovery ----

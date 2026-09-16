@@ -223,6 +223,7 @@ class PolicyEngine:
         return PolicyDecision(
             decision=self.config.runtime.default_decision,
             reason=f"default decision: {self.config.runtime.default_decision}",
+            metadata={"implicit_default": True},
             risk=metadata.risk if metadata else None,
             dry_run=self.config.runtime.dry_run,
         )

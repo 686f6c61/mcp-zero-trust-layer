@@ -29,6 +29,7 @@ from mcp_zero_trust_layer.capabilities.onboarding import (
     build_onboard_config,
     parse_server_specs,
 )
+from mcp_zero_trust_layer.client_config import render_client_config
 from mcp_zero_trust_layer.client_import import import_client_config
 from mcp_zero_trust_layer.config import load_config
 from mcp_zero_trust_layer.config.models import MCPZTConfig, PolicyConfig, ServerConfig
@@ -1109,7 +1110,7 @@ def client_config(
             "--kind",
             "-k",
             help=(
-                "claude-desktop, cursor, vscode, claude-code, or json. "
+                "claude-desktop, cursor, vscode, claude-code, gemini, codex, grok, or json. "
                 "Use json for machine-readable output; claude-code emits CLI commands."
             ),
         ),
@@ -1121,11 +1122,16 @@ def client_config(
     ] = "http://127.0.0.1:8765",
     server: Annotated[str | None, typer.Option(help="Only generate one logical server.")] = None,
     output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
+    token_env: Annotated[
+        str | None, typer.Option("--token-env", help="Gateway token environment variable name.")
+    ] = None,
 ) -> None:
     """Generate MCP client configuration that points clients at MCPZT."""
     try:
         config = load_config(path)
-        rendered = _render_client_config(config, kind, base_url=base_url, server_name=server)
+        rendered = _render_client_config(
+            config, kind, base_url=base_url, server_name=server, token_env=token_env
+        )
     except (ConfigError, ValueError) as exc:
         console.print(f"[red]Cannot generate client config:[/red] {exc}")
         raise typer.Exit(1) from exc
@@ -1133,7 +1139,7 @@ def client_config(
         output.write_text(rendered + "\n", encoding="utf-8")
         console.print(f"[green]Wrote[/green] {output}")
         return
-    console.print(rendered)
+    typer.echo(rendered)
 
 
 @client_app.command("import")
@@ -1701,32 +1707,11 @@ def _render_client_config(
     *,
     base_url: str,
     server_name: str | None,
+    token_env: str | None = None,
 ) -> str:
-    selected = [
-        server
-        for server in config.servers
-        if server.transport == "http" and (server_name is None or server.name == server_name)
-    ]
-    if not selected:
-        raise ValueError("no matching HTTP server configured")
-
-    base = base_url.rstrip("/")
-    servers = {
-        f"mcpzt-{server.name}": {
-            "command": "npx",
-            "args": ["-y", "mcp-remote", f"{base}/mcp/{server.name}"],
-        }
-        for server in selected
-    }
-
-    if kind in {"claude-desktop", "cursor", "vscode", "json"}:
-        return json.dumps({"mcpServers": servers}, indent=2, sort_keys=True)
-    if kind == "claude-code":
-        return "\n".join(
-            f"claude mcp add mcpzt-{server.name} --transport http {base}/mcp/{server.name}"
-            for server in selected
-        )
-    raise ValueError("kind must be claude-desktop, cursor, vscode, claude-code, or json")
+    return render_client_config(
+        config, kind, base_url=base_url, server_name=server_name, token_env=token_env
+    )
 
 
 def _default_claude_desktop_config() -> Path:
@@ -1757,17 +1742,28 @@ def _set_approval_status(
 ) -> None:
     config = load_config(path)
     store = ApprovalStore(config.approvals)
+    audit = AuditLogger(config.audit)
+    reviewer = decided_by or _default_approver()
     try:
+        existing = store.get(approval_id)
+        if existing is None:
+            raise KeyError(approval_id)
+        audit.log_approval("decision_intent", {
+            **existing.model_dump(mode="json"),
+            "requested_status": status,
+            "requested_by": reviewer,
+            "requested_comment": comment,
+        })
         approval = store.set_status(
             approval_id,
             status,  # type: ignore[arg-type]
-            decided_by=decided_by or _default_approver(),
+            decided_by=reviewer,
             decision_comment=comment,
         )
     except KeyError as exc:
         console.print(f"[red]Approval not found:[/red] {approval_id}")
         raise typer.Exit(1) from exc
-    AuditLogger(config.audit).log_approval(status, approval.model_dump(mode="json"))
+    audit.log_approval(status, approval.model_dump(mode="json"))
     ApprovalNotifier(config.approvals).notify(status, approval.model_dump(mode="json"))
     console.print(f"[green]{approval.id}[/green] -> {approval.status}")
 

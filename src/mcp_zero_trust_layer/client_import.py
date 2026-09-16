@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import re
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import yaml
 
@@ -35,7 +37,10 @@ def import_client_config(
     mcpzt_config_path: Path,
 ) -> ClientImport:
     data = json.loads(source.expanduser().read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("client config must be a JSON object")
     source_servers = _source_servers(data)
+    root = "mcpServers" if "mcpServers" in data else "servers"
     used_names: set[str] = set()
     mcpzt_servers: list[dict[str, Any]] = []
     client_servers: dict[str, dict[str, Any]] = {}
@@ -43,7 +48,10 @@ def import_client_config(
 
     for source_name, source_server in source_servers.items():
         if not isinstance(source_server, dict):
-            continue
+            raise ValueError(
+                f"server {source_name!r}: no supported MCP servers entry (expected object)"
+            )
+        _validate_import_entry(source_name, source_server)
         if _is_mcpzt_wrapper(source_server):
             raise ValueError(
                 f"server {source_name!r} already points to an MCPZT wrapper; "
@@ -51,8 +59,6 @@ def import_client_config(
             )
         logical_name = _unique_logical_name(source_name, used_names)
         server_payload = _mcpzt_server(logical_name, source_server)
-        if server_payload is None:
-            continue
         mcpzt_servers.append(server_payload)
         client_servers[source_name] = _client_server(
             source_server,
@@ -82,14 +88,18 @@ def import_client_config(
         "audit": {"destination": "file", "path": audit_path, "hash_chain": True},
         "approvals": {"backend": "sqlite", "path": approvals_path, "default_ttl_seconds": 900},
     }
+    client_payload = deepcopy(data)
+    client_payload[root] = client_servers
     return ClientImport(
         mcpzt_config_yaml=yaml.safe_dump(payload, sort_keys=False),
-        client_config_json=json.dumps({"mcpServers": client_servers}, indent=2, sort_keys=True),
+        client_config_json=json.dumps(client_payload, indent=2, sort_keys=True),
         servers=tuple(imported),
     )
 
 
 def _source_servers(data: dict[str, Any]) -> dict[str, Any]:
+    if "mcpServers" in data and "servers" in data:
+        raise ValueError("ambiguous client config: both mcpServers and servers are present")
     servers = data.get("mcpServers")
     if isinstance(servers, dict):
         return servers
@@ -99,26 +109,25 @@ def _source_servers(data: dict[str, Any]) -> dict[str, Any]:
     raise ValueError("client config must contain an mcpServers or servers object")
 
 
-def _mcpzt_server(logical_name: str, source_server: dict[str, Any]) -> dict[str, Any] | None:
-    if isinstance(source_server.get("url"), str):
+def _mcpzt_server(logical_name: str, source_server: dict[str, Any]) -> dict[str, Any]:
+    url = source_server.get("httpUrl", source_server.get("url"))
+    if isinstance(url, str):
         payload: dict[str, Any] = {
             "name": logical_name,
             "transport": "http",
-            "upstream": source_server["url"],
+            "upstream": url,
         }
         if isinstance(source_server.get("headers"), dict):
             payload["upstream_headers"] = source_server["headers"]
         return payload
-    if isinstance(source_server.get("command"), str):
-        raw_env = source_server.get("env")
-        env = raw_env if isinstance(raw_env, dict) else {}
-        return {
-            "name": logical_name,
-            "transport": "stdio",
-            "command": [source_server["command"], *_list_args(source_server.get("args"))],
-            "env": {key: f"env:{key}" for key in sorted(env)},
-        }
-    return None
+    raw_env = source_server.get("env")
+    env = raw_env if isinstance(raw_env, dict) else {}
+    return {
+        "name": logical_name,
+        "transport": "stdio",
+        "command": [source_server["command"], *_list_args(source_server.get("args"))],
+        "env": {key: f"env:{key}" for key in sorted(env)},
+    }
 
 
 def _client_server(
@@ -131,6 +140,7 @@ def _client_server(
 ) -> dict[str, Any]:
     if mcpzt_server["transport"] == "stdio":
         client: dict[str, Any] = {
+            **deepcopy(source_server),
             "command": wrapper_command,
             "args": [
                 "wrap",
@@ -143,10 +153,75 @@ def _client_server(
         if isinstance(source_server.get("env"), dict) and source_server["env"]:
             client["env"] = source_server["env"]
         return client
-    return {
-        "command": "npx",
-        "args": ["-y", "mcp-remote", f"{base_url.rstrip('/')}/mcp/{mcpzt_server['name']}"],
+    client = deepcopy(source_server)
+    # Original credentials belong only to the upstream, never to the gateway.
+    client.pop("headers", None)
+    url_key = "httpUrl" if "httpUrl" in client else "url"
+    client[url_key] = f"{base_url.rstrip('/')}/mcp/{quote(str(mcpzt_server['name']), safe='')}"
+    return client
+
+
+def _validate_import_entry(name: str, entry: dict[str, Any]) -> None:
+    supported = {
+        "command",
+        "args",
+        "env",
+        "url",
+        "httpUrl",
+        "headers",
+        "type",
+        "cwd",
+        "sandboxEnabled",
+        "disabled",
+        "enabled",
+        "autoApprove",
+        "alwaysAllow",
+        "disabledTools",
+        "includeTools",
+        "excludeTools",
+        "timeout",
+        "trust",
+        "description",
     }
+    unknown = sorted(set(entry) - supported)
+    if unknown:
+        raise ValueError(
+            f"server {name!r}: unsupported fields: {', '.join(unknown)}; review manually"
+        )
+    if entry.get("type") is not None and (
+        not isinstance(entry["type"], str) or entry["type"] not in {"stdio", "http"}
+    ):
+        raise ValueError(f"server {name!r}: unsupported transport type")
+    targets = [key for key in ("command", "url", "httpUrl") if key in entry]
+    if len(targets) != 1 or not isinstance(entry[targets[0]], str) or not entry[targets[0]]:
+        raise ValueError(f"server {name!r}: no supported MCP servers entry; use one command or URL")
+    if "args" in entry and (
+        not isinstance(entry["args"], list)
+        or any(not isinstance(arg, str) for arg in entry["args"])
+    ):
+        raise ValueError(f"server {name!r}: args must be a list of strings")
+    for field in ("env", "headers"):
+        if field in entry and (
+            not isinstance(entry[field], dict)
+            or any(not isinstance(v, str) for v in entry[field].values())
+        ):
+            raise ValueError(f"server {name!r}: {field} must map names to strings")
+    is_http = targets[0] != "command"
+    if is_http and any(key in entry for key in ("args", "env", "cwd", "sandboxEnabled")):
+        raise ValueError(f"server {name!r}: unsupported process options on HTTP entry")
+    if not is_http and "headers" in entry:
+        raise ValueError(f"server {name!r}: unsupported headers on stdio entry")
+    if entry.get("type") == ("stdio" if is_http else "http"):
+        raise ValueError(f"server {name!r}: transport type does not match target")
+    # env and cwd stay in the original host's interpolation context. The command,
+    # args, URL and headers move to the gateway, where host variables do not exist.
+    for field in ("command", "args", "url", "httpUrl", "headers"):
+        value = entry.get(field)
+        if value is not None and "${" in json.dumps(value):
+            raise ValueError(
+                f"server {name!r}: unsupported client interpolation in {field}; "
+                "configure the upstream explicitly using MCPZT secret references"
+            )
 
 
 def _list_args(value: Any) -> list[str]:

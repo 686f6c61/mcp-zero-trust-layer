@@ -147,6 +147,7 @@ class ApprovalStore:
                 approval.client_id == context.identity.client_id,
                 approval.agent_id == context.identity.agent_id,
                 approval.arguments_hash == hash_arguments(context.arguments),
+                approval.request_binding == context.metadata.get("request_binding"),
             ]
         )
 
@@ -161,6 +162,7 @@ class ApprovalStore:
             client_id=context.identity.client_id,
             agent_id=context.identity.agent_id,
             arguments_hash=hash_arguments(context.arguments),
+            request_binding=context.metadata.get("request_binding"),
             arguments_redacted=redact_sensitive(context.arguments),
             expires_at=datetime.now(UTC) + timedelta(seconds=self.default_ttl_seconds),
         )
@@ -246,6 +248,7 @@ class ApprovalStore:
     ) -> ApprovalRequest:
         with self._sqlite_connection() as connection:
             _ensure_sqlite_schema(connection)
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT payload FROM approvals WHERE id = ?",
                 (approval_id,),
@@ -311,20 +314,17 @@ def _with_status(
     decided_by: str | None,
     decision_comment: str | None,
 ) -> ApprovalRequest:
+    if status == approval.status:
+        return approval
     update: dict[str, Any] = {"status": status}
-    if status == "pending":
-        update.update(
-            {
-                "decided_at": None,
-                "decided_by": None,
-                "decision_comment": None,
-            }
-        )
+    if status == "consumed":
+        update["consumed_at"] = datetime.now(UTC)
     else:
         update["decided_at"] = datetime.now(UTC)
         update["decided_by"] = decided_by
         update["decision_comment"] = decision_comment
     return approval.model_copy(update=update)
+
 
 
 def _ensure_sqlite_schema(connection: sqlite3.Connection) -> None:

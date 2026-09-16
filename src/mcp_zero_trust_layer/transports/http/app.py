@@ -15,6 +15,7 @@ from mcp_zero_trust_layer.core.pipeline import MCPPipeline
 from mcp_zero_trust_layer.identity import AuthError, AuthResolver
 from mcp_zero_trust_layer.observability import MetricsCollector
 from mcp_zero_trust_layer.protocol import error_response
+from mcp_zero_trust_layer.transports.http.sessions import SessionRegistry
 from mcp_zero_trust_layer.upstream.http import HTTPUpstreamClient
 
 
@@ -34,7 +35,10 @@ def create_app_from_config(config: MCPZTConfig, default_server: str | None = Non
     if config.runtime.trusted_hosts:
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=config.runtime.trusted_hosts)
     metrics = MetricsCollector() if config.metrics.enabled else None
-    pipeline = MCPPipeline(config, HTTPUpstreamClient(), metrics=metrics)
+    upstream = HTTPUpstreamClient()
+    pipeline = MCPPipeline(config, upstream, metrics=metrics)
+    sessions = SessionRegistry(upstream)
+    app.state.sessions = sessions
     auth = AuthResolver(config.auth)
     selected_default_server = default_server or _default_server_name(config)
 
@@ -81,6 +85,7 @@ def create_app_from_config(config: MCPZTConfig, default_server: str | None = Non
             auth,
             selected_default_server,
             config,
+            sessions=sessions,
             authorization=authorization,
             x_mcpzt_subject=x_mcpzt_subject,
             x_mcpzt_client_id=x_mcpzt_client_id,
@@ -102,11 +107,35 @@ def create_app_from_config(config: MCPZTConfig, default_server: str | None = Non
             auth,
             server_name,
             config,
+            sessions=sessions,
             authorization=authorization,
             x_mcpzt_subject=x_mcpzt_subject,
             x_mcpzt_client_id=x_mcpzt_client_id,
             x_mcpzt_agent_id=x_mcpzt_agent_id,
         )
+
+    @app.delete("/mcp")
+    @app.delete("/mcp/{server_name}")
+    async def delete_session(request: Request, server_name: str = selected_default_server) -> Response:
+        if _origin_error(config, request.headers.get("origin")):
+            return Response(status_code=403)
+        try:
+            identity = auth.resolve_http_identity(
+                headers=dict(request.headers), source_ip=request.client.host if request.client else None,
+                fallback_subject="http-client", environment=config.project.environment,
+            )
+        except AuthError:
+            return Response(status_code=401, headers={"WWW-Authenticate": _www_authenticate_header(config, request)})
+        supplied = request.headers.get("mcp-session-id")
+        if not supplied:
+            return Response(status_code=400)
+        try:
+            key = sessions.resolve(server_name, identity, supplied, initialize=False)
+        except KeyError:
+            return Response(status_code=404)
+        if key:
+            sessions.remove(key)
+        return Response(status_code=204)
 
     return app
 
@@ -118,6 +147,7 @@ async def _handle_post(
     server_name: str,
     config: MCPZTConfig,
     *,
+    sessions: SessionRegistry,
     authorization: str | None,
     x_mcpzt_subject: str | None,
     x_mcpzt_client_id: str | None,
@@ -153,25 +183,55 @@ async def _handle_post(
             environment=config.project.environment,
         )
     except AuthError as exc:
-        response = JSONResponse(
+        auth_response = JSONResponse(
             error_response(payload.get("id"), -32040, exc.message),
             status_code=401,
         )
-        response.headers["WWW-Authenticate"] = _www_authenticate_header(config, request)
-        return response
+        auth_response.headers["WWW-Authenticate"] = _www_authenticate_header(config, request)
+        return auth_response
+
+    protocol_version = request.headers.get("mcp-protocol-version")
+    if protocol_version and protocol_version not in {"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}:
+        return JSONResponse(error_response(payload.get("id"), -32600, "Unsupported MCP protocol version"), status_code=400)
+    initialize = payload.get("method") == "initialize"
+    try:
+        session_key = sessions.resolve(server_name, identity, request.headers.get("mcp-session-id"), initialize=initialize)
+    except KeyError:
+        return JSONResponse(error_response(payload.get("id"), -32044, "Unknown session"), status_code=404)
+    except ValueError as exc:
+        return JSONResponse(error_response(payload.get("id"), -32600, str(exc)), status_code=400)
+    except OverflowError:
+        return JSONResponse(error_response(payload.get("id"), -32044, "Session capacity reached"), status_code=503)
+    # Never trust caller-provided internal routing keys.
+    headers.pop("x-mcpzt-session-key", None)
+    headers.pop("mcp-session-id", None)
+    if session_key:
+        headers["x-mcpzt-session-key"] = session_key
 
     # pipeline.handle performs blocking upstream I/O; offload it so a slow
     # upstream cannot stall the whole event loop.
-    handled: dict[str, Any] | None = await run_in_threadpool(
-        pipeline.handle,
-        server_name,
-        payload,
-        identity=identity,
-        headers=headers,
-    )
-    if handled is None:
-        return Response(status_code=202)
-    return JSONResponse(handled)
+    try:
+        handled: dict[str, Any] | None = await run_in_threadpool(
+            pipeline.handle, server_name, payload, identity=identity, headers=headers,
+        )
+    except Exception:
+        if initialize and session_key:
+            sessions.remove(session_key)
+        raise
+    if session_key and not sessions.active(session_key):
+        return JSONResponse(error_response(payload.get("id"), -32044, "Session expired"), status_code=404)
+    upstream_error = handled.get("error", {}) if handled else {}
+    upstream_error_data = upstream_error.get("data")
+    if session_key and upstream_error.get("code") == -32003 and isinstance(upstream_error_data, dict) and upstream_error_data.get("status_code") == 404:
+        sessions.remove(session_key)
+        return JSONResponse(handled, status_code=404)
+    if initialize and session_key and (handled is None or "error" in handled):
+        sessions.remove(session_key)
+        session_key = None
+    response = Response(status_code=202) if handled is None else JSONResponse(handled)
+    if session_key:
+        response.headers["Mcp-Session-Id"] = session_key
+    return response
 
 
 def _default_server_name(config: MCPZTConfig) -> str:

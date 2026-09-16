@@ -54,7 +54,7 @@ class FakeUpstream:
 def test_discover_capabilities_full_flow() -> None:
     upstream = FakeUpstream(
         {
-            "initialize": {"result": {"capabilities": {}}},
+            "initialize": {"result": {"protocolVersion": "2025-03-26", "capabilities": {}}},
             "notifications/initialized": None,
             "tools/list": {"result": {"tools": [{"name": "t1"}]}},
             "resources/list": {"result": {"resources": [{"uri": "r1"}]}},
@@ -71,7 +71,7 @@ def test_discover_capabilities_full_flow() -> None:
 def test_discover_capabilities_non_list_items_skipped() -> None:
     upstream = FakeUpstream(
         {
-            "initialize": {"result": {}},
+            "initialize": {"result": {"protocolVersion": "2025-03-26"}},
             "notifications/initialized": None,
             "tools/list": {"result": {"tools": "not-a-list"}},
             "resources/list": None,
@@ -85,7 +85,7 @@ def test_discover_capabilities_non_list_items_skipped() -> None:
 def test_discover_capabilities_loop_send_error() -> None:
     upstream = FakeUpstream(
         {
-            "initialize": {"result": {}},
+            "initialize": {"result": {"protocolVersion": "2025-03-26"}},
             "notifications/initialized": None,
             "tools/list": RuntimeError("boom"),
             "resources/list": {"result": {"resources": []}},
@@ -126,7 +126,7 @@ def test_discover_initialize_raises() -> None:
 def test_discover_initialized_notification_raises() -> None:
     upstream = FakeUpstream(
         {
-            "initialize": {"result": {}},
+            "initialize": {"result": {"protocolVersion": "2025-03-26"}},
             "notifications/initialized": RuntimeError("notif-fail"),
             "tools/list": {"result": {"tools": []}},
             "resources/list": {"result": {"resources": []}},

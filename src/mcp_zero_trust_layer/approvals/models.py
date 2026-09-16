@@ -18,10 +18,12 @@ class ApprovalRequest(BaseModel):
     identity_subject: str
     client_id: str | None = None
     agent_id: str | None = None
+    request_binding: str | None = None
     arguments_hash: str
     arguments_redacted: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     expires_at: datetime | None = None
+    consumed_at: datetime | None = None
     decided_at: datetime | None = None
     decided_by: str | None = None
     decision_comment: str | None = None

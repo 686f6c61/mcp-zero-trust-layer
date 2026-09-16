@@ -10,22 +10,23 @@ from mcp_zero_trust_layer.audit import redact_sensitive
 from mcp_zero_trust_layer.config.models import ServerConfig
 from mcp_zero_trust_layer.config.secrets import SecretError, resolve_secret_value
 from mcp_zero_trust_layer.protocol import JSONRPCError
+from mcp_zero_trust_layer.protocol.jsonrpc import require_jsonrpc_message
 
 FORWARDED_HEADERS = {
     "accept",
     "content-type",
     "mcp-protocol-version",
-    "mcp-session-id",
 }
 MAX_ERROR_BODY_BYTES = 4096
 
 
 class HTTPUpstreamClient:
     def __init__(self) -> None:
-        # Keyed by (server, downstream session) so upstream sessions are never
-        # shared across distinct downstream clients.
+        # Only gateway/discovery-generated internal scopes may retain sessions.
+        # Public session headers are never forwarded or used as cache keys.
         self._session_ids: dict[tuple[str, str], str] = {}
         self._session_lock = threading.Lock()
+        self._active_sessions: set[tuple[str, str]] = set()
 
     def send(
         self,
@@ -53,17 +54,18 @@ class HTTPUpstreamClient:
                 json=message,
                 headers=forwarded_headers,
             ) as response:
+                if response.headers.get("content-type", "").split(";", 1)[0] == "text/event-stream":
+                    raise JSONRPCError(-32603, "Upstream SSE is not supported; configure JSON responses")
                 content = _read_response_content(response, server)
-                if session_id := response.headers.get("mcp-session-id"):
+                if session_key[1] and response.status_code < 400 and (session_id := response.headers.get("mcp-session-id")):
                     with self._session_lock:
-                        self._session_ids[session_key] = session_id
+                        if session_key in self._active_sessions:
+                            self._session_ids[session_key] = session_id
         except httpx.TimeoutException as exc:
             raise JSONRPCError(-32002, "Upstream timeout", {"server": server.name}) from exc
         except httpx.HTTPError as exc:
             raise JSONRPCError(-32003, "Upstream HTTP error", {"error": str(exc)}) from exc
 
-        if response.status_code == 202 or not content:
-            return None
         if response.status_code >= 400:
             raise JSONRPCError(
                 -32003,
@@ -73,18 +75,35 @@ class HTTPUpstreamClient:
                     "body": _safe_error_body(content),
                 },
             )
+        if response.status_code == 202 or not content:
+            return None
+        if "id" not in message:
+            raise JSONRPCError(-32603, "Upstream returned a response to a notification")
         try:
             payload = json.loads(content)
         except ValueError as exc:
             raise JSONRPCError(-32603, "Invalid upstream JSON response") from exc
-        if not isinstance(payload, dict):
-            raise JSONRPCError(-32603, "Invalid upstream JSON-RPC response")
+        try:
+            require_jsonrpc_message(payload)
+        except JSONRPCError as exc:
+            raise JSONRPCError(-32603, "Invalid upstream JSON-RPC response") from exc
+        if payload.get("jsonrpc") != "2.0" or payload.get("id") != message.get("id") or type(payload.get("id")) is not type(message.get("id")) or ("result" in payload) == ("error" in payload):
+            raise JSONRPCError(-32603, "Invalid or uncorrelated upstream JSON-RPC response")
         return payload
+
+    def register_session(self, server: str, session_key: str) -> None:
+        with self._session_lock:
+            self._active_sessions.add((server, session_key))
+
+    def forget_session(self, server: str, session_key: str) -> None:
+        with self._session_lock:
+            self._session_ids.pop((server, session_key), None)
+            self._active_sessions.discard((server, session_key))
 
 
 def _downstream_session(headers: dict[str, str]) -> str:
     for key, value in headers.items():
-        if key.lower() == "mcp-session-id":
+        if key.lower() == "x-mcpzt-session-key":
             return value
     return ""
 

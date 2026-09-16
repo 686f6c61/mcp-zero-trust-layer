@@ -375,7 +375,8 @@ def test_input_policy_allowed_ancestor_with_non_dict_value() -> None:
     # "a" is an allowed ancestor of "a.b" but its value is not a dict
     policy = InputPolicy(allowed_fields=["a.b"])
     result = validate_input_policy({"a": 5}, policy)
-    assert result.passed is True
+    assert result.passed is False
+    assert "must be an object" in result.errors[0]
 
 
 def test_input_policy_max_field_bytes_non_string_value() -> None:

@@ -5,6 +5,20 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact commit to verify
+        required: true
+        type: string
+      expected_version:
+        description: Optional release version or v-prefixed tag
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -14,52 +28,98 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-
-      - name: Install package
-        run: python -m pip install -e ".[dev]"
-
+      - name: Install package and SDK test dependency
+        run: python -m pip install -c constraints.txt -e ".[dev]"
+      - name: Verify real SDK smoke is available
+        run: python -c "import mcp"
       - name: Lint
         run: ruff check .
-
       - name: Type check
         run: mypy
-
-      - name: Test
+      - name: Test including real SDK compatibility
         run: python -m pytest --cov=mcp_zero_trust_layer --cov-report=term-missing --cov-fail-under=100
 
   build:
-    name: Build package
+    name: Build and verify exact distributions
+    needs: [test]
     runs-on: ubuntu-latest
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Install build tools
-        run: python -m pip install build twine
-
+        run: python -m pip install -c constraints.txt build twine
+      - name: Validate source identity and release version
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+        run: |
+          python - <<'PY'
+          import ast, os, tomllib
+          from pathlib import Path
+          project = tomllib.loads(Path('pyproject.toml').read_text())['project']
+          assert project['name'] == 'mcp-zero-trust-layer'
+          source = ast.parse(Path('src/mcp_zero_trust_layer/__init__.py').read_text())
+          versions = [ast.literal_eval(node.value) for node in source.body if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == '__version__' for t in node.targets)]
+          assert versions == [project['version']], 'Source version mismatch'
+          expected = os.environ.get('EXPECTED_VERSION', '').removeprefix('v')
+          assert not expected or expected == project['version'], 'Release tag/version mismatch'
+          PY
       - name: Build distributions
         run: python -m build
-
-      - name: Check distributions
-        run: twine check dist/*
-
-      - name: Upload distributions
+      - name: Check distribution metadata and artifact identity
+        run: |
+          twine check dist/*
+          python - <<'PY'
+          import email, hashlib, tarfile, tomllib, zipfile
+          from pathlib import Path
+          project = tomllib.loads(Path('pyproject.toml').read_text())['project']
+          artifacts = sorted(Path('dist').iterdir())
+          assert len(artifacts) == 2, 'Expected exactly one wheel and one source distribution'
+          wheel, = Path('dist').glob('*.whl')
+          sdist, = Path('dist').glob('*.tar.gz')
+          with zipfile.ZipFile(wheel) as archive:
+              metadata, = [name for name in archive.namelist() if name.endswith('.dist-info/METADATA')]
+              wheel_meta = email.message_from_bytes(archive.read(metadata))
+          with tarfile.open(sdist) as archive:
+              metadata, = [item for item in archive.getmembers() if item.name.count('/') == 1 and item.name.endswith('/PKG-INFO')]
+              source_meta = email.message_from_bytes(archive.extractfile(metadata).read())
+          for metadata in (wheel_meta, source_meta):
+              assert metadata['Name'] == project['name']
+              assert metadata['Version'] == project['version']
+          Path('SHA256SUMS').write_text(''.join(f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.as_posix()}\n' for path in artifacts))
+          PY
+      - name: Smoke test isolated wheel install
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/mcpzt-wheel-smoke"
+          "$RUNNER_TEMP/mcpzt-wheel-smoke/bin/python" -m pip install -c constraints.txt dist/*.whl
+          export EXPECTED_VERSION
+          EXPECTED_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/mcpzt-wheel-smoke/bin/python" -I -c 'import importlib.metadata, os, mcp_zero_trust_layer; assert importlib.metadata.version("mcp-zero-trust-layer") == os.environ["EXPECTED_VERSION"] == mcp_zero_trust_layer.__version__'
+          "$RUNNER_TEMP/mcpzt-wheel-smoke/bin/mcpzt" version
+          "$RUNNER_TEMP/mcpzt-wheel-smoke/bin/mcpzt" pack list
+          "$RUNNER_TEMP/mcpzt-wheel-smoke/bin/mcpzt" init --config "$RUNNER_TEMP/wheel-smoke.yaml"
+          "$RUNNER_TEMP/mcpzt-wheel-smoke/bin/mcpzt" config validate --config "$RUNNER_TEMP/wheel-smoke.yaml"
+          "$RUNNER_TEMP/mcpzt-wheel-smoke/bin/mcpzt" config lint --config "$RUNNER_TEMP/wheel-smoke.yaml"
+      - name: Upload verified distributions and checksums
         uses: actions/upload-artifact@v4
         with:
           name: python-distributions
-          path: dist/
+          if-no-files-found: error
+          path: |
+            dist/
+            SHA256SUMS

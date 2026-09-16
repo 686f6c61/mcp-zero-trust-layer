@@ -184,6 +184,7 @@ class AuthResolver:
         auth_method: str,
         environment: str | None,
     ) -> Identity:
+        headers = headers if self.config.trust_identity_headers else {}
         groups = _as_str_list(claims.get(self.config.groups_claim))
         roles = _as_str_list(claims.get(self.config.roles_claim))
         subject = str(claims.get(self.config.subject_claim) or "unknown")

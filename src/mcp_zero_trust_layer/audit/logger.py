@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,9 @@ SECRET_VALUE_RES = [
 class AuditLogger:
     def __init__(self, config: AuditConfig):
         self.config = config
+        self._stdout_lock = threading.Lock()
+        self._stdout_previous: str | None = None
+        self._stdout_sequence = 0
         self._hmac_key = self._resolve_hmac_key(config)
 
     @staticmethod
@@ -58,6 +62,7 @@ class AuditLogger:
         *,
         upstream_called: bool | None = None,
         upstream_status: str | None = None,
+        approval_id: str | None = None,
     ) -> dict[str, Any]:
         event = {
             "event_id": f"evt_{uuid4().hex}",
@@ -67,6 +72,13 @@ class AuditLogger:
             "identity": redact_sensitive(context.identity.model_dump()),
             "server": context.server,
             "method": context.method,
+            "direction": context.direction,
+            "approval_id": approval_id,
+            "request_binding": context.metadata.get("request_binding"),
+            "arguments_hash": hashlib.sha256(
+                json.dumps(context.arguments, sort_keys=True, separators=(",", ":"), default=str)
+                .encode("utf-8")
+            ).hexdigest(),
             "capability_type": context.capability_type,
             "capability": context.capability,
             "decision": decision.decision,
@@ -94,9 +106,17 @@ class AuditLogger:
 
     def _write(self, event: dict[str, Any]) -> None:
         if self.config.destination == "stdout":
-            if self.config.hash_chain:
-                event = self._with_hash(event, previous=None, sequence=0)
-            print(json.dumps(event, sort_keys=True))
+            with self._stdout_lock:
+                if self.config.hash_chain:
+                    event = self._with_hash(
+                        event,
+                        previous=self._stdout_previous,
+                        sequence=self._stdout_sequence + 1,
+                    )
+                print(json.dumps(event, sort_keys=True), flush=True)
+                if self.config.hash_chain:
+                    self._stdout_previous = event["event_hash"]
+                    self._stdout_sequence = event["sequence"]
             return
 
         path = Path(self.config.path)
@@ -123,6 +143,9 @@ class AuditLogger:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             try:
                 yield handle
+                handle.flush()
+                if self.config.strict:
+                    os.fsync(handle.fileno())
             finally:
                 if fcntl is not None:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
@@ -199,6 +222,8 @@ def verify_audit_hash_chain(path: str | Path, key: bytes | str | None = None) ->
             event = json.loads(line)
         except json.JSONDecodeError as exc:
             return False, f"line {index}: invalid JSON: {exc}"
+        if not isinstance(event, dict):
+            return False, f"line {index}: event must be a JSON object"
         if event.get("previous_event_hash") != previous:
             return False, f"line {index}: previous_event_hash mismatch"
         if "sequence" in event:

@@ -36,6 +36,7 @@ def _collect_disallowed(
     errors: list[str],
 ) -> None:
     if not isinstance(value, dict):
+        errors.append(f"field {'.'.join(prefix)!r} must be an object for nested allowed_fields")
         return
     for key, item in value.items():
         path = prefix + (key,)

@@ -104,8 +104,9 @@ def test_http_session_id_is_cached_and_reused() -> None:
         )
         client = HTTPUpstreamClient()
         message = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
-        client.send(config, message)
-        client.send(config, message)
+        client.register_session("s", "gateway-scope")
+        client.send(config, message, headers={"x-mcpzt-session-key": "gateway-scope"})
+        client.send(config, message, headers={"x-mcpzt-session-key": "gateway-scope"})
     finally:
         server.shutdown()
     # First upstream call has no cached session, second reuses the captured one.
@@ -195,7 +196,7 @@ def test_http_connection_error_maps_to_jsonrpc_error(monkeypatch) -> None:
 
 
 def test_downstream_session_reads_header() -> None:
-    assert _downstream_session({"Mcp-Session-Id": "abc"}) == "abc"
+    assert _downstream_session({"X-Mcpzt-Session-Key": "abc"}) == "abc"
     assert _downstream_session({"other": "x"}) == ""
 
 

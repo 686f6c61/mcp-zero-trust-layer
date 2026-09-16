@@ -9,7 +9,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from mcp_zero_trust_layer.approvals.models import ApprovalRequest
+from mcp_zero_trust_layer.approvals.notifier import ApprovalNotifier
 from mcp_zero_trust_layer.approvals.store import ApprovalStore
+from mcp_zero_trust_layer.audit import AuditLogger
 from mcp_zero_trust_layer.config.models import MCPZTConfig
 from mcp_zero_trust_layer.identity import AuthError, AuthResolver
 
@@ -28,6 +30,8 @@ def create_approvals_app(config: MCPZTConfig) -> FastAPI:
     )
     store = ApprovalStore(config.approvals)
     auth = AuthResolver(config.auth)
+    audit = AuditLogger(config.audit)
+    notifier = ApprovalNotifier(config.approvals)
 
     def _reviewer(request: Request) -> str:
         headers = dict(request.headers.items())
@@ -58,20 +62,31 @@ def create_approvals_app(config: MCPZTConfig) -> FastAPI:
                 detail="separation of duties: the requester cannot approve their own call",
             )
         try:
-            return store.set_status(
+            audit.log_approval("decision_intent", {
+                **approval.model_dump(mode="json"),
+                "requested_status": status,
+                "requested_by": reviewer,
+                "requested_comment": comment,
+            })
+            updated = store.set_status(
                 approval_id, status, decided_by=reviewer, decision_comment=comment
             )
+            audit.log_approval(status, updated.model_dump(mode="json"))
+            notifier.notify(status, updated.model_dump(mode="json"))
+            return updated
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="approval not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/", response_class=HTMLResponse)
-    def index() -> HTMLResponse:
+    def index(request: Request) -> HTMLResponse:
+        _reviewer(request)
         return HTMLResponse(_render_index(store.list(), config.project.name))
 
     @app.get("/api/approvals")
-    def list_approvals() -> JSONResponse:
+    def list_approvals(request: Request) -> JSONResponse:
+        _reviewer(request)
         return JSONResponse([approval.model_dump(mode="json") for approval in store.list()])
 
     @app.post("/api/approvals/{approval_id}/allow", responses=APPROVAL_NOT_FOUND_RESPONSE)

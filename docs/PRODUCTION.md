@@ -1,5 +1,7 @@
 # Production Guide
 
+For 0.4.0 deployment limits, session lifecycle, approval migration and audit semantics, read [SUPPORTED_PROFILE.md](SUPPORTED_PROFILE.md). Client/provider setup is in [CLIENT_COMPATIBILITY.md](CLIENT_COMPATIBILITY.md); conservative validator behavior is in [VALIDATOR_LIMITS.md](VALIDATOR_LIMITS.md).
+
 This guide describes how to run MCP Zero Trust Layer around real MCP servers. It is public operational documentation, so it focuses on deployment posture, safety checks and day-two operations rather than internal build planning.
 
 MCPZT should be treated as an enforcement point. It is not a replacement for least-privilege upstream credentials, private networking, source-system authorization or good incident response. The secure production shape is layered: clients authenticate to MCPZT, MCPZT enforces MCP-aware policy, upstream servers stay private, and the underlying systems still enforce their own permissions.

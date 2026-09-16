@@ -5,6 +5,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -17,7 +18,9 @@ DISCOVERY_METHODS = {
     "resources": ("resources/list", "resources", "uri"),
     "prompts": ("prompts/list", "prompts", "name"),
 }
-DISCOVERY_PROTOCOL_VERSION = "2025-03-26"
+DISCOVERY_PROTOCOL_VERSION = "2025-11-25"
+SUPPORTED_PROTOCOL_VERSIONS = {"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}
+MAX_DISCOVERY_PAGES = 1000
 
 
 class CapabilitySnapshot(BaseModel):
@@ -49,26 +52,54 @@ def discover_capabilities(
         server=server.name,
         discovered_at=datetime.now(UTC).isoformat(),
     )
-    _initialize_for_discovery(server, upstream, snapshot)
-    for field, (method, result_key, _identity_key) in DISCOVERY_METHODS.items():
-        request = {"jsonrpc": "2.0", "id": field, "method": method, "params": {}}
-        try:
-            response = upstream.send(server, request)
-        except Exception as exc:  # discovery should collect per-capability errors
-            snapshot.errors[field] = str(exc)
-            continue
-        result = response.get("result") if isinstance(response, dict) else None
-        items = result.get(result_key) if isinstance(result, dict) else []
-        if isinstance(items, list):
+    headers = {"x-mcpzt-session-key": uuid4().hex}
+    register = getattr(upstream, "register_session", None)
+    if register:
+        register(server.name, headers["x-mcpzt-session-key"])
+    try:
+        if not _initialize_for_discovery(server, upstream, snapshot, headers):
+            return snapshot
+        for field, (method, result_key, _identity_key) in DISCOVERY_METHODS.items():
+            items: list[dict[str, Any]] = []
+            cursors: set[str] = set()
+            params: dict[str, Any] = {}
+            try:
+                for page in range(MAX_DISCOVERY_PAGES):
+                    request = {"jsonrpc": "2.0", "id": f"{field}-{page}", "method": method, "params": params}
+                    response = upstream.send(server, request, headers=headers)
+                    if not isinstance(response, dict) or "error" in response:
+                        raise ValueError(f"invalid discovery response: {response!r}")
+                    result = response.get("result")
+                    page_items = result.get(result_key) if isinstance(result, dict) else None
+                    if not isinstance(page_items, list) or not all(isinstance(item, dict) for item in page_items):
+                        raise ValueError(f"invalid {result_key} list")
+                    items.extend(page_items)
+                    assert isinstance(result, dict)
+                    cursor = result.get("nextCursor")
+                    if cursor is None:
+                        break
+                    if not isinstance(cursor, str) or not cursor or cursor in cursors:
+                        raise ValueError("invalid or repeated discovery cursor")
+                    cursors.add(cursor)
+                    params = {"cursor": cursor}
+                else:
+                    raise ValueError("discovery page limit exceeded")
+            except Exception as exc:
+                snapshot.errors[field] = str(exc)
             setattr(snapshot, field, items)
-    return snapshot
+        return snapshot
+    finally:
+        forget = getattr(upstream, "forget_session", None)
+        if forget:
+            forget(server.name, headers["x-mcpzt-session-key"])
 
 
 def _initialize_for_discovery(
     server: ServerConfig,
     upstream: UpstreamClient,
     snapshot: CapabilitySnapshot,
-) -> None:
+    headers: dict[str, str],
+) -> bool:
     request = {
         "jsonrpc": "2.0",
         "id": "initialize",
@@ -80,20 +111,27 @@ def _initialize_for_discovery(
         },
     }
     try:
-        response = upstream.send(server, request)
-    except Exception as exc:  # discovery should keep collecting what it can
+        response = upstream.send(server, request, headers=headers)
+        if not isinstance(response, dict) or "error" in response:
+            raise ValueError(f"invalid initialize response: {response!r}")
+        result = response.get("result")
+        version = result.get("protocolVersion") if isinstance(result, dict) else None
+        if version not in SUPPORTED_PROTOCOL_VERSIONS:
+            raise ValueError(f"unsupported negotiated protocol version: {version!r}")
+        headers["mcp-protocol-version"] = version
+    except Exception as exc:
         snapshot.errors["initialize"] = str(exc)
-        return
-    if isinstance(response, dict) and response.get("error"):
-        snapshot.errors["initialize"] = json.dumps(response["error"], sort_keys=True)
-        return
+        return False
     try:
         upstream.send(
             server,
             {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+            headers=headers,
         )
     except Exception as exc:
         snapshot.errors["initialized"] = str(exc)
+        return False
+    return True
 
 
 def diff_snapshots(previous: CapabilitySnapshot, current: CapabilitySnapshot) -> CapabilityDiff:

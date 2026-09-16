@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 INVALID_REQUEST = "Invalid Request"
 
@@ -22,8 +22,8 @@ def is_notification(message: dict[str, Any]) -> bool:
 
 
 def is_response(message: dict[str, Any]) -> bool:
-    return "method" not in message and "id" in message and (
-        "result" in message or "error" in message
+    return "method" not in message and (
+        ("id" in message and "result" in message) or "error" in message
     )
 
 
@@ -44,12 +44,38 @@ def error_response(
 
 
 def require_jsonrpc_message(message: Any) -> dict[str, Any]:
+    """Validate MCP's JSON-RPC envelope before classification or policy evaluation."""
+
+    def invalid(reason: str) -> NoReturn:
+        raise JSONRPCError(-32600, INVALID_REQUEST, {"reason": reason})
+
     if not isinstance(message, dict):
-        raise JSONRPCError(-32600, INVALID_REQUEST, {"reason": "message must be an object"})
+        invalid("message must be an object")
     if message.get("jsonrpc") != "2.0":
-        raise JSONRPCError(-32600, INVALID_REQUEST, {"reason": "jsonrpc must be '2.0'"})
-    if "id" in message and message["id"] is None:
-        raise JSONRPCError(-32600, INVALID_REQUEST, {"reason": "id must not be null"})
-    if "method" not in message and "id" not in message:
-        raise JSONRPCError(-32600, INVALID_REQUEST, {"reason": "not a JSON-RPC message"})
+        invalid("jsonrpc must be '2.0'")
+    if "id" in message and (type(message["id"]) not in (str, int)):
+        invalid("id must be a non-null string or integer")
+
+    if "method" in message:
+        if not isinstance(message["method"], str) or not message["method"]:
+            invalid("method must be a non-empty string")
+        if "result" in message or "error" in message:
+            invalid("requests and notifications must not contain result or error")
+        if "params" in message and not isinstance(message["params"], dict):
+            invalid("MCP params must be an object")
+    else:
+        if "result" in message and "id" not in message:
+            invalid("result responses require an id")
+        if ("result" in message) == ("error" in message):
+            invalid("responses require exactly one of result or error")
+        if "params" in message:
+            invalid("responses must not contain params")
+        if "result" in message and not isinstance(message["result"], dict):
+            invalid("MCP result must be an object")
+        if "error" in message:
+            error = message["error"]
+            if not isinstance(error, dict):
+                invalid("error must be an object")
+            if type(error.get("code")) is not int or not isinstance(error.get("message"), str):
+                invalid("error requires an integer code and a string message")
     return message

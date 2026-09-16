@@ -44,7 +44,13 @@ def run_stdio_wrapper(
     )
 
     try:
-        for line in stdin:
+        while True:
+            line = stdin.readline(config.runtime.max_request_bytes + 1)
+            if not line:
+                break
+            if len(line.encode("utf-8")) > config.runtime.max_request_bytes:
+                _write_protocol(stdout, error_response(None, -32042, "Request body too large"))
+                return 2
             line = line.strip()
             if not line:
                 continue
@@ -52,6 +58,9 @@ def run_stdio_wrapper(
                 message = json.loads(line)
             except json.JSONDecodeError:
                 _write_protocol(stdout, error_response(None, -32700, "Parse error"))
+                continue
+            if not isinstance(message, dict):
+                _write_protocol(stdout, error_response(None, -32600, "Invalid Request"))
                 continue
             response = pipeline.handle(server.name, message, identity=identity)
             if response is not None:

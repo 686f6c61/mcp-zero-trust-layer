@@ -69,14 +69,15 @@ Start from a clean development environment.
 python -m venv .venv
 . .venv/bin/activate
 python -m pip install -U pip
-python -m pip install -e ".[dev]"
+python -m pip install -c constraints.txt -e ".[dev]"
 ```
 
 Run the full verification set.
 
 ```bash
-python -m pytest
 ruff check .
+mypy
+python -m pytest --cov=mcp_zero_trust_layer --cov-report=term-missing --cov-fail-under=100
 python -m build
 twine check dist/*
 ```
@@ -205,6 +206,14 @@ Any config-breaking change should be called out in `CHANGELOG.md` with migration
 ## GitHub Actions Publishing
 
 The repository uses `.github/workflows/publish.yml` for release publishing. It builds distributions, validates them, uploads the build artifact inside GitHub Actions, and publishes through `pypa/gh-action-pypi-publish`. The same release workflow also publishes the official container image to GitHub Container Registry and then installs the just-published PyPI package in a fresh environment.
+
+Publication now depends on the same reusable verification workflow as CI. Every release commit must pass Ruff, mypy and the full test suite with **100% line coverage** on Python 3.11, 3.12, 3.13 and 3.14. The dev extra includes the actual MCP SDK and the workflow explicitly imports it, so the SDK smoke test cannot silently disappear because its optional dependency is absent. Runtime dependency constraints are applied to test and wheel installations; build tooling and SDK development dependencies retain their declared version ranges.
+
+Only after all matrix jobs pass does the build job verify source/package version agreement and equality with the published Git tag (an optional leading `v` is accepted). It builds exactly one wheel and one source distribution, validates their internal distribution names and versions, runs `twine check`, and installs the wheel in a fresh virtualenv outside the checkout. That smoke checks both installed version sources, bundled packs and CLI initialization/config validation. SHA-256 checksums accompany the artifact and are checked after download immediately before Trusted Publishing. The manifest is integrity evidence within the workflow, not an independent signature or reproducible-build guarantee.
+
+The triggers remain unchanged: main pushes and pull requests run CI; **only a published GitHub release** triggers PyPI publication. The container-only workflow remains manually dispatched. It resolves the requested ref once to a commit SHA, verifies that the supplied stable `X.Y.Z` image version equals the source version, runs the same full verification gate, and builds that exact SHA. Neither verification nor build jobs receive publication credentials. Prereleases do not move the release workflow's `latest` container tag.
+
+A failing test, coverage threshold, type check, version check, metadata check or isolated wheel smoke stops publication. The post-publication PyPI installation check remains additional evidence; it cannot roll back an upload that has already succeeded. Keep branch/environment protections and Trusted Publisher settings aligned with these workflows.
 
 The publish job must have:
 

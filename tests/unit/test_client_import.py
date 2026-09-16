@@ -88,9 +88,9 @@ def test_import_client_config_sanitizes_http_logical_names(tmp_path: Path) -> No
 
     assert mcpzt_config["servers"][0]["name"] == "io.github.github-github-mcp-server"
     assert mcpzt_config["servers"][0]["transport"] == "http"
-    wrapped = client_config["mcpServers"]["io.github.github/github-mcp-server"]
-    assert wrapped["command"] == "npx"
-    assert wrapped["args"][-1] == "http://127.0.0.1:8765/mcp/io.github.github-github-mcp-server"
+    wrapped = client_config["servers"]["io.github.github/github-mcp-server"]
+    assert wrapped["type"] == "http"
+    assert wrapped["url"] == "http://127.0.0.1:8765/mcp/io.github.github-github-mcp-server"
 
 
 def test_import_client_config_rejects_already_wrapped_servers(tmp_path: Path) -> None:

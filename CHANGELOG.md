@@ -4,6 +4,29 @@ All notable changes to MCP Zero Trust Layer will be documented here.
 
 The project follows SemVer during the `0.x` line with the caveat that minor versions may still change configuration shape before `1.0`.
 
+## 0.4.0 - 2026-09-16
+
+### Fixed
+
+- Enforce explicit external policy denials without relying on an optional policy ID. Unsupported approval methods fail closed. JWT authorization attributes no longer fall back to untrusted caller headers.
+- Bind opaque HTTP sessions to authenticated identities and servers, isolate stateless calls, expire/close mappings, and reject malformed or unsolicited JSON-RPC messages.
+- Serialize SQLite review/consume transitions, preserve reviewer evidence and authenticate approval reads. Approval UI decisions now use audit and notifications.
+- Persist strict audit intent before dispatch, record correlated outcomes including unknown completion, flush file writes while locked, and generate valid per-instance stdout chains.
+- Bound stdio writes/reads by a complete-frame deadline and size limits; correlate response IDs and explicitly reject unsupported server messages. Paginate discovery and validate negotiated versions.
+- Correct SQL literal/comment parsing, recipient/domain validation and nested input allowlists. SQL is deliberately conservative and still requires read-only upstream database credentials.
+- Preserve supported imported client security settings; reject options that cannot safely be transferred rather than silently dropping them.
+
+### Added
+
+- Native VS Code/Cursor/Gemini HTTP config and Grok Build/Codex TOML, environment-backed credential references, and a dated provider compatibility guide.
+- Full approval request/config binding and audit approval IDs, argument hashes and direction. Existing pre-0.4 approvals must be recreated.
+- Regression tests for concurrency, fail-closed behavior, session isolation, parser boundaries and real MCP SDK interoperability. Release publication now uses the same Python 3.11–3.14 lint/type/coverage gates as CI and an isolated wheel smoke test.
+- Updated constrained cryptography dependency to 50.0.0.
+
+### Supported profile
+
+HTTP is JSON POST, not SSE passthrough. Stdio is serial POSIX without server-initiated messages or concurrent cancellation. Session state is process-local. Audit proves gateway evidence under its trust assumptions, not independent downstream execution. See `docs/SUPPORTED_PROFILE.md` for migration and limits; cloud-provider calls have not been certified by these local tests.
+
 ## 0.3.0 - 2026-07-21
 
 This release is a security-hardening pass with full remediation of an internal audit, plus a large test and typing investment. Several changes affect behavior of approvals and the approval UI; review the Security section before upgrading a live deployment.

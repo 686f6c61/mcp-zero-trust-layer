@@ -45,10 +45,8 @@ def test_mixed_transports_headers_collision_and_args(tmp_path: Path) -> None:
             {
                 "mcpServers": {
                     "http-svc": {"url": "https://x/mcp", "headers": {"H": "v"}},
-                    "std svc": {"command": "/bin/foo", "args": "notalist"},
+                    "std svc": {"command": "/bin/foo", "args": []},
                     "std/svc": {"command": "/bin/bar"},
-                    "bad": "not-a-dict",
-                    "empty": {"foo": "bar"},
                 }
             }
         ),

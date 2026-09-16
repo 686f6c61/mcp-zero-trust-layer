@@ -55,6 +55,12 @@ MCPZT is built for that missing layer. It treats every MCP interaction as someth
 
 The result is a boring but useful control point. Boring is good here. You want a deterministic layer that can explain why it allowed a call, why it denied a call, why it created an approval, and whether the upstream server was actually contacted.
 
+## 0.4.0 compatibility and upgrade boundary
+
+Read [the supported runtime profile](docs/SUPPORTED_PROFILE.md) before upgrading. This release fixes approval/audit concurrency and enforcement gaps, isolates authenticated HTTP sessions, and invalidates old approvals without the new request binding. HTTP upstreams must return JSON. Stdio is a bounded POSIX serial profile; server-initiated messages are rejected explicitly. The gateway does not provide independent proof of downstream execution.
+
+[Client configuration and provider compatibility](docs/CLIENT_COMPATIBILITY.md) covers Grok Build, xAI remote MCP, Codex, Gemini, VS Code, Cursor and Claude, distinguishing generated configuration from live-provider testing. [Validator limits](docs/VALIDATOR_LIMITS.md) describe the conservative SQL/email/input contracts.
+
 ## Installation
 
 For most users, install MCPZT from PyPI into an isolated environment. This gives you the `mcpzt` command without cloning the repository.
