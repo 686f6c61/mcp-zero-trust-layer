@@ -1,8 +1,10 @@
 # MCP Zero Trust Layer
 
+[Website](https://mcp-zero-trust.686f6c61.dev/en/) · [PyPI](https://pypi.org/project/mcp-zero-trust-layer/) · [GHCR image](https://github.com/686f6c61/mcp-zero-trust-layer/pkgs/container/mcp-zero-trust-layer) · [Documentation](https://github.com/686f6c61/mcp-zero-trust-layer/tree/main/docs) · [Release 0.6.0](https://github.com/686f6c61/mcp-zero-trust-layer/releases/tag/v0.6.0)
+
 MCP Zero Trust Layer, usually shortened to MCPZT, is an open-source and self-hosted security layer for MCP servers. It sits between an MCP client and one or more real MCP servers, then decides what the client can discover, call, send, receive, approve and audit.
 
-The purpose is not to create a new MCP ecosystem or a hosted control plane. The purpose is to give developers and platform teams a practical enforcement point they can put in front of existing MCP servers without rewriting those servers.
+Developers and platform teams can enforce policies in front of existing MCP servers. Destination-signed receipts additionally require a cooperating destination; external checks require a scope-specific adapter, separate observer keys and explicit trust configuration.
 
 ```text
 MCP client / agent
@@ -27,7 +29,7 @@ This README is the public practical entry point: what the project does, how to r
 
 ## The Short Version
 
-An MCP server can expose very powerful capabilities. A tool named `search_issues` may be harmless, while a tool named `merge_pull_request`, `delete_repository`, `run_sql`, `send_email`, `read_secret` or `create_refund` may have real operational impact. If a client can connect directly to the MCP server, the client may be able to list and call more tools than the user or organization intended.
+An MCP server can expose very powerful capabilities. A read tool such as `search_issues` can expose sensitive data, while tools such as `merge_pull_request`, `delete_repository`, `run_sql`, `send_email`, `read_secret` or `create_refund` may have real operational impact. If a client can connect directly to the MCP server, the client may be able to list and call more tools than the user or organization intended.
 
 MCPZT adds a policy layer in front of that server. It can hide capabilities from `tools/list`, block calls before they reach the upstream, validate arguments, require human approval for high-risk actions, redact sensitive output, and write audit logs explaining every important decision.
 
@@ -35,7 +37,7 @@ The important design point is that MCPZT is not a SaaS requirement. It runs loca
 
 ## Status
 
-Current line: `0.x` developer preview. Use `mcpzt version`, the PyPI project page or the GitHub releases page to confirm the exact installed version.
+Current release: **0.6.0**, within the `0.x` developer-preview line. Use `mcpzt version` to confirm your installed version. PyPI publishes the Python package; GHCR publishes `:0.6.0`, the moving `:0.6` tag and `:latest`. Pin a release tag or image digest for repeatable deployments.
 
 The core path is implemented. The package has a CLI, YAML config validation, HTTP proxy mode, stdio wrapper mode, multi-MCP routing, policy evaluation, policy explanation, policy coverage analysis, parameter-level controls, validators, approvals, a self-hosted approval UI, file and SQLite approval storage, output enforcement, capability discovery, onboarding config generation, deterministic scanning, searchable audit logs with hash-chain verification, Prometheus metrics, authentication modes, secret references, client config generation, examples, deployment recipes, Docker packaging and PyPI-ready build metadata.
 
@@ -43,7 +45,7 @@ The HTTP runtime supports MCP Streamable HTTP POST with JSON responses. GET SSE 
 
 Security hardening is already part of the preview. Production configs reject fail-open `dry_run` by default, require default deny, require a public base URL or trusted hosts, and require issuer/audience for JWT and OIDC. Shared-key auth does not trust caller-supplied identity headers unless explicitly configured. Request and upstream response sizes are bounded. Upstream error bodies are truncated and redacted. Output policies apply to JSON-RPC `result` and `error` payloads. Approvals are single use and the approval UI authenticates decisions and enforces separation of duties. The audit chain can be keyed with an HMAC secret. Output redaction can target values inside text with `redact_patterns`. Approval decisions are auditable. Production disables FastAPI docs and OpenAPI routes.
 
-The codebase ships with 100% test coverage enforced in CI, plus `ruff` linting and `mypy` type checking as required gates.
+CI enforces 100% line coverage, `ruff` and `mypy` on Python 3.11–3.14. Coverage does not prove security or an external effect; see the [tested cases and remaining limitations](docs/TESTING_0.6.0.md).
 
 ## Why This Project Exists
 
@@ -78,7 +80,9 @@ Read [the supported runtime profile](docs/SUPPORTED_PROFILE.md) before upgrading
 For most users, install MCPZT from PyPI into an isolated environment. This gives you the `mcpzt` command without cloning the repository.
 
 ```bash
-python -m pip install mcp-zero-trust-layer
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade mcp-zero-trust-layer
 mcpzt version
 ```
 
@@ -94,7 +98,7 @@ For local development from this repository, create a virtual environment and ins
 ```bash
 python -m venv .venv
 . .venv/bin/activate
-python -m pip install -e ".[dev]"
+python -m pip install -c constraints.txt -e ".[dev]"
 ```
 
 The CLI exposes two command names. `mcpzt` is the short name for daily use, and `mcp-zero-trust-layer` is the full package-style name.
@@ -104,13 +108,22 @@ mcpzt version
 mcp-zero-trust-layer version
 ```
 
-Docker is also supported. Use the published GHCR image for release deployments, or build a local image when testing changes from a checkout. The Dockerfile installs the package with `constraints.txt`, which keeps image builds reproducible while leaving PyPI dependency ranges flexible for library users.
+Docker is also supported. Use the published GHCR image for release deployments, or build a local image when testing changes from a checkout. The Dockerfile installs the package with `constraints.txt`, which pins the configured dependency set while leaving PyPI dependency ranges flexible for library users. This is not a bit-for-bit reproducible-build guarantee.
 
 ```bash
-docker run --rm ghcr.io/686f6c61/mcp-zero-trust-layer:<version> version
+docker run --rm ghcr.io/686f6c61/mcp-zero-trust-layer:0.6.0 version
 docker build -t mcpzt:local .
 docker run --rm mcpzt:local version
 ```
+
+To refresh the moving image tag explicitly:
+
+```bash
+docker pull ghcr.io/686f6c61/mcp-zero-trust-layer:latest
+docker run --rm ghcr.io/686f6c61/mcp-zero-trust-layer:latest version
+```
+
+The release workflow verifies public PyPI file hashes against the CI-approved artifacts and runs the v2 demo from both PyPI and the published GHCR image. The registry package page contains all image tags; `latest` moves with a stable release and is not an immutable reference.
 
 You can validate an example config inside Docker without giving the container write access to the project.
 
@@ -975,7 +988,7 @@ servers:
     command:
       - npx
       - -y
-      - "@modelcontextprotocol/server-filesystem"
+      - "@modelcontextprotocol/server-filesystem@2026.8.31"
       - ./workspace
 ```
 
@@ -1013,7 +1026,7 @@ In a sidecar deployment, the real MCP server binds to localhost inside the same 
 The repository includes public deployment recipes under `deploy/`. The Docker Compose production example runs the container with a read-only filesystem, dropped Linux capabilities and explicit environment-backed secrets. The Helm chart is a starting point for Kubernetes sidecar or gateway deployments. It defaults to one replica because approval state is local by default, even when using SQLite. Scale-out deployments should use storage with correct locking semantics and deliberate operational ownership before increasing replicas.
 
 ```bash
-docker run --rm ghcr.io/686f6c61/mcp-zero-trust-layer:<version> version
+docker run --rm ghcr.io/686f6c61/mcp-zero-trust-layer:0.6.0 version
 docker compose -f deploy/docker-compose.prod.yaml up
 helm install mcpzt deploy/helm
 ```
@@ -1040,7 +1053,7 @@ The examples are meant to be read as starting points, not as perfect production 
 
 ## Documentation Map
 
-Use [docs/MULTI_MCP_USE_CASES.md](docs/MULTI_MCP_USE_CASES.md) for the tested multi-server scenario. Use [docs/PRODUCTION.md](docs/PRODUCTION.md) for deployment posture. Use [docs/PYPI_RELEASE.md](docs/PYPI_RELEASE.md) for release flow. Security reporting is in [SECURITY.md](SECURITY.md), contribution guidance is in [CONTRIBUTING.md](CONTRIBUTING.md), and release notes are in [CHANGELOG.md](CHANGELOG.md).
+Start with the [documentation index](docs/README.md) and [0.6.0 upgrade/recovery guide](docs/EVIDENCE_OPERATIONS.md). Use [docs/MULTI_MCP_USE_CASES.md](docs/MULTI_MCP_USE_CASES.md) for the tested multi-server scenario. Use [docs/PRODUCTION.md](docs/PRODUCTION.md) for deployment posture. Use [docs/PYPI_RELEASE.md](docs/PYPI_RELEASE.md) for release flow. Security reporting is in [SECURITY.md](SECURITY.md), contribution guidance is in [CONTRIBUTING.md](CONTRIBUTING.md), and release notes are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Development
 
@@ -1068,7 +1081,7 @@ Before release, also run `mcpzt config validate --config examples/multi-mcp/mcpz
 
 ## Packaging
 
-Package metadata lives in [pyproject.toml](pyproject.toml). Runtime dependency ranges stay flexible for PyPI users. Docker builds use [constraints.txt](constraints.txt) for reproducibility. Generated package artifacts are written to [dist](dist).
+Package metadata lives in [pyproject.toml](pyproject.toml). Runtime dependency ranges stay flexible for PyPI users. Docker builds use [constraints.txt](constraints.txt) for reproducibility. Generated package artifacts are written to the local `dist/` directory, which is not tracked in Git.
 
 The source distribution includes bundled policy packs from `src/mcp_zero_trust_layer/packs`, public documentation under `docs`, YAML examples under `examples`, and deployment recipes under `deploy`. Internal planning docs, local configs, audit logs, approval stores, virtual environments and generated build artifacts are intentionally excluded.
 
