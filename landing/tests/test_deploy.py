@@ -41,3 +41,16 @@ class DeployTests(unittest.TestCase):
     def test_wrong_application_branch_is_not_mutated(self): self.run_deploy(branch='main')
     def test_failed_deployment_never_reports_public_success(self): self.run_deploy(status='failed')
     def test_finished_wrong_commit_is_rejected(self): self.run_deploy(revision='b'*40)
+
+    def test_transient_read_connection_failure_is_retried(self):
+        with patch.object(deploy, 'urlopen', side_effect=[deploy.URLError('timed out'), io.BytesIO(b'{"status":"finished"}')]) as request, patch.object(deploy.time, 'sleep'):
+            self.assertEqual(deploy.api('https://coolify.example', 'synthetic', '/deployments/test'), {'status':'finished'})
+            self.assertEqual(request.call_count, 2)
+
+    def test_uncertain_mutation_is_never_repeated(self):
+        for method in ['POST', 'PATCH']:
+            with self.subTest(method=method), patch.object(deploy, 'urlopen', side_effect=deploy.URLError('timed out')) as request, patch.object(deploy.time, 'sleep') as sleep:
+                with self.assertRaisesRegex(RuntimeError, 'connection failed'):
+                    deploy.api('https://coolify.example', 'synthetic', '/deploy', method, {})
+                self.assertEqual(request.call_count, 1)
+                sleep.assert_not_called()

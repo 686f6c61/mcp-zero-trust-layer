@@ -16,11 +16,19 @@ def api(base, token, path, method='GET', payload=None):
         data=json.dumps(payload).encode() if payload is not None else None,
         headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/json', 'Content-Type': 'application/json'},
         method=method)
-    try:
-        with urlopen(request, timeout=30) as response:
-            return json.load(response)
-    except HTTPError as error:
-        raise RuntimeError(f'Coolify {method} {path}: HTTP {error.code}') from None
+    # Only reads may be retried: a timed-out mutation may already have succeeded.
+    attempts = 3 if method == 'GET' else 1
+    for attempt in range(attempts):
+        try:
+            with urlopen(request, timeout=30) as response:
+                return json.load(response)
+        except HTTPError as error:
+            raise RuntimeError(f'Coolify {method} {path}: HTTP {error.code}') from None
+        except (URLError, TimeoutError):
+            if attempt + 1 == attempts:
+                raise RuntimeError(f'Coolify {method} {path}: connection failed; check runner connectivity') from None
+            print(f'Coolify read connection failed; retry {attempt + 1}/{attempts - 1}', flush=True)
+            time.sleep(5)
 
 
 def main():
