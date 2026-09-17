@@ -1,0 +1,71 @@
+name: Landing
+on:
+  push:
+    branches: [landing]
+  pull_request:
+    branches: [landing]
+concurrency:
+  group: landing-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  website:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: landing/package-lock.json
+      - run: python3 landing/build.py --site-url https://preview.example
+      - run: python3 -m unittest discover -s landing/tests -p 'test_*.py'
+      - run: npm ci --prefix landing
+      - run: npx --prefix landing playwright install --with-deps chromium
+      - run: docker build --build-arg ENABLE_ANALYTICS=false -t mcpzt-landing:test .
+      - name: Start and check Nginx
+        run: |
+          docker run -d --name landing -p 127.0.0.1:8938:80 mcpzt-landing:test
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8938/en/ >/dev/null && break; sleep 1; done
+          python3 landing/tests/check_http.py http://127.0.0.1:8938
+      - run: npm test --prefix landing
+        env:
+          LANDING_URL: http://127.0.0.1:8938
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: landing-screenshots
+          path: landing/test-results/
+
+  deploy:
+    name: Deploy tested landing commit
+    needs: [website]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/landing'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: landing-production
+      url: https://mcp-zero-trust.686f6c61.dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build production pages
+        run: python3 landing/build.py --production --analytics
+      - name: Require public package, release and documentation
+        run: python3 landing/check_release.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Deploy exact commit and verify public pages
+        run: python3 landing/deploy.py
+        env:
+          COOLIFY_URL: ${{ vars.COOLIFY_URL }}
+          COOLIFY_APP_UUID: ${{ vars.COOLIFY_APP_UUID }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}

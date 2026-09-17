@@ -1,0 +1,50 @@
+{
+  "permit": {
+    "attempt": {
+      "payload": {
+        "attempt_id": "attempt_938a16c566674517934dee5ea6ca0bfc",
+        "audience": "refund-demo",
+        "authorization_digest": "57fe026ce6b13f6c93958e0bd9cf49a82561920d07c7dabedf33bea5ea16b269",
+        "issuer": "gateway-demo",
+        "nonce": "6600d3dca6fc8a6e0b7e763dd54a81734f68e26ec4f29f4e3d7278063690f460",
+        "operation_id": "op_25ce8a97717c498e88ed1adebe666afa",
+        "tenant": "demo"
+      },
+      "protected": {
+        "alg": "Ed25519",
+        "kid": "gateway-demo",
+        "kind": "attempt",
+        "version": 1
+      },
+      "signature": "AUA6RZxlAdrAL6E6cMKrWwXT_yaK_dnmAVKpLRE-VtfNsj8m0l13zjJSd2hW8-OUIyE4bWiFjvYG89aqtT5uAQ"
+    },
+    "authorization": {
+      "payload": {
+        "approval_id": null,
+        "audience": "refund-demo",
+        "authorization_id": "auth_8678c87a1cf648ff8f4bb61ba9b00248",
+        "decision": "allow",
+        "expires_at": 1789668818,
+        "issued_at": 1789668758,
+        "issuer": "gateway-demo",
+        "method": "tools/call",
+        "operation_id": "op_25ce8a97717c498e88ed1adebe666afa",
+        "policy_binding": "f64edcb3d2042c1d70d90695bae90fa1c05ddd78197e0b07050d4c46e948f61f",
+        "principal": "b86629a23e2804a43cd9b88d00f33519a24ee5aa0317be8aa77a6919d21cef0b",
+        "request_digest": "a1985dce1f64dc6058e3d9c5cae411651ab511f949ba693d99990d240acd9ef3",
+        "request_nonce": "d489c13cc155b66c7d538471bd5ccaee1d74e5a8b96b27ce5e8ddd30373dc18c",
+        "tenant": "demo",
+        "tool": "refund"
+      },
+      "protected": {
+        "alg": "Ed25519",
+        "kid": "gateway-demo",
+        "kind": "authorization",
+        "version": 1
+      },
+      "signature": "zbMHar0Fb6cWuCj9Jqn-_Yig2zDTop5b1K74orYNuXozQRydznPIYbCbLzCKosBigAIVM0D3SnFm_83qv08sBQ"
+    }
+  },
+  "receipt": null,
+  "version": 1
+}

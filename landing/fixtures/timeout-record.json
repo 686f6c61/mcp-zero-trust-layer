@@ -1,0 +1,16 @@
+[
+  {
+    "effect": "unknown",
+    "event_id": "ev_8a996d57ac0c461dafac860af7d4f383",
+    "event_type": "execution_evidence",
+    "operation_id": "op_25ce8a97717c498e88ed1adebe666afa",
+    "phase": "dispatch_intent"
+  },
+  {
+    "effect": "unknown",
+    "event_id": "ev_f64f32ccbb6d4f15bcd1b27cf0b8f9bb",
+    "event_type": "execution_evidence",
+    "operation_id": "op_25ce8a97717c498e88ed1adebe666afa",
+    "phase": "outcome_unavailable"
+  }
+]

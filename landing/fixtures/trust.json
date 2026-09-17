@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "keys": [
+    {
+      "kid": "gateway-demo",
+      "issuer": "gateway-demo",
+      "audience": "refund-demo",
+      "tenant": "demo",
+      "role": "gateway",
+      "public_key": "-3cuvqcZIncNczJKpBgXo7ac7j6AC40XtPDc1w567-Q",
+      "scopes": [],
+      "status": "active"
+    },
+    {
+      "kid": "destination-demo",
+      "issuer": "refund-demo",
+      "audience": "gateway-demo",
+      "tenant": "demo",
+      "role": "destination",
+      "public_key": "AmdK4QS_5g6o5Xr42RPAoh5VJC02ci0KeyWaNlyUJBo",
+      "scopes": [
+        "stripe.refund.status.v1"
+      ],
+      "status": "active"
+    }
+  ]
+}

@@ -1,0 +1,484 @@
+{
+  "es": {
+    "title": "MCPZT — Control y evidencia para tus servidores MCP",
+    "description": "Controla las llamadas de tus agentes con políticas, validaciones y aprobaciones. Recibos verificables y comprobaciones externas con límites explícitos de confianza.",
+    "skip": "Saltar al contenido",
+    "menu": "Menú",
+    "language": "Idioma",
+    "nav": [
+      "Evidencia",
+      "Ejemplos",
+      "Cómo funciona",
+      "Instalar"
+    ],
+    "eyebrow": "OPEN SOURCE · AUTOALOJADO · MCP",
+    "hero": "Tus agentes actúan.<br><span>Tú pones las reglas.</span>",
+    "intro": "Controla lo que pueden ejecutar. Comprueba qué evidencia deja cada acción.",
+    "introDetail": "Políticas, validaciones y aprobaciones delante de tus servidores MCP. Recibos firmados y comprobaciones externas para entender lo que ocurrió, con límites de confianza explícitos.",
+    "try": "Explorar la demo",
+    "docs": "Documentación",
+    "copy": "Copiar",
+    "copied": "Comando copiado.",
+    "copyFailed": "No se pudo copiar. Selecciona el comando y cópialo manualmente.",
+    "heroNote": "Python 3.11–3.14 · Apache-2.0 · Sin servicio SaaS obligatorio",
+    "diagramTitle": "UNA LLAMADA. TRES PREGUNTAS.",
+    "diagram": [
+      [
+        "01",
+        "¿Puede hacerlo?",
+        "Política y autorización"
+      ],
+      [
+        "02",
+        "¿Qué declara el destino?",
+        "Recibo firmado y vinculado"
+      ],
+      [
+        "03",
+        "¿Qué observa otra fuente?",
+        "Comprobación externa acotada"
+      ]
+    ],
+    "diagramNote": "Una firma autentica una declaración. Por sí sola no prueba un efecto externo.",
+    "demoKicker": "01 / EXPLORA LA EVIDENCIA",
+    "demoTitle": "El timeout no es el final de la historia.",
+    "demoIntro": "Una llamada pierde su respuesta. El gateway conserva el resultado desconocido y consulta el recibo sin repetir la acción. Después, un observador contrasta la declaración con una fuente configurada.",
+    "simulation": "SIMULACIÓN LOCAL · SIN PAGOS NI LLAMADAS A STRIPE",
+    "demoLabels": [
+      "Timeout",
+      "Recibo recuperado",
+      "Contradicción",
+      "Coincidencia",
+      "Fallo posterior",
+      "Importe distinto",
+      "Pendiente",
+      "No encontrado"
+    ],
+    "demoDescriptions": [
+      "Se intentó enviar la llamada, pero no se observó una respuesta. El efecto permanece desconocido.",
+      "Una consulta de solo lectura recupera la declaración firmada del destino: committed. No demuestra que el efecto externo ocurriera.",
+      "El recibo declara committed; el observador informa de un estado failed en la fuente simulada. La firma del recibo puede seguir siendo válida.",
+      "El observador informa de un estado succeeded con los campos esperados. La conclusión sigue dependiendo de la fuente y del observador.",
+      "Una observación posterior informa de un fallo. La observación anterior se conserva en el historial.",
+      "El importe observado no coincide con la petición autorizada. La operación no queda corroborada.",
+      "La fuente simulada informa de un estado pendiente. No se convierte en éxito ni en fracaso.",
+      "La consulta no encuentra el registro. Eso no demuestra que la acción nunca ocurriera."
+    ],
+    "gateway": "Gateway",
+    "destination": "Destino",
+    "observer": "Observador",
+    "trace": "Traza de métodos del destino",
+    "once": "1 llamada de negocio. 1 consulta del recibo.",
+    "raw": "Abrir fixture JSON",
+    "fixtureDocs": "Cómo verificar los fixtures",
+    "demoFallback": "La vista interactiva necesita JavaScript. Puedes abrir los fixtures públicos y reproducir la demo con la CLI.",
+    "demoLimit": "Datos sintéticos de los fixtures de 0.6.0. Administración compartida; independencia no demostrada. El navegador muestra registros, no verifica sus firmas. La verificación offline autentica al observador, no una firma de Stripe ni el estado externo actual.",
+    "reproduce": "Reproducir en un directorio nuevo",
+    "freshDir": "Usa una ruta nueva en cada ejecución. La demo genera claves locales: no publiques el directorio completo.",
+    "layersKicker": "02 / GARANTÍAS CON ALCANCE",
+    "layersTitle": "Saber qué sabes. Y qué falta por saber.",
+    "layers": [
+      [
+        "01 / CONTROL",
+        "Autoriza la llamada",
+        "Filtra el descubrimiento, valida los argumentos y exige aprobación cuando lo indique la política.",
+        "Permitir o enviar una llamada no demuestra su ejecución externa."
+      ],
+      [
+        "02 / RECIBO",
+        "Autentica la declaración",
+        "Vincula el recibo firmado a la misma autorización, petición e intento. Requiere un destino adaptado.",
+        "Un destino puede firmar una declaración incorrecta."
+      ],
+      [
+        "03 / OBSERVACIÓN",
+        "Contrasta una fuente",
+        "Un observador consulta una fuente configurada y añade su informe al historial de evidencia.",
+        "El informe depende del observador y de la fuente; no prueba independencia ni ejecución única."
+      ]
+    ],
+    "examplesKicker": "03 / EMPIEZA CON UN CASO REALISTA",
+    "examplesTitle": "Tus herramientas. Tus límites.",
+    "examplesIntro": "Configuraciones de partida para adaptar a tu entorno. Los seis ejemplos básicos tienen la evidencia desactivada; los recibos y las comprobaciones se prueban en demos separadas.",
+    "examples": [
+      [
+        "filesystem-safe",
+        "Filesystem",
+        "Lectura acotada y escritura con aprobación.",
+        "Node.js · raíz de archivos local"
+      ],
+      [
+        "github-readonly",
+        "GitHub",
+        "Consultas permitidas y cambios sujetos a política.",
+        "Servidor MCP · credenciales de GitHub"
+      ],
+      [
+        "postgres-readonly",
+        "PostgreSQL",
+        "Valida consultas SQL antes de enviarlas.",
+        "Servidor MCP · base de datos de prueba"
+      ],
+      [
+        "oidc-gateway",
+        "OIDC + CRM",
+        "Permisos por grupo y redacción de campos de salida.",
+        "Proveedor OIDC · servidor CRM"
+      ],
+      [
+        "protected-http-upstream",
+        "HTTP protegido",
+        "Separa la identidad del cliente y la credencial del upstream.",
+        "Upstream HTTP · credencial del servidor"
+      ],
+      [
+        "multi-mcp",
+        "Multi-MCP",
+        "Políticas por capacidad para varios servidores.",
+        "Servicios de ejemplo · configuración local"
+      ]
+    ],
+    "config": "Ver configuración",
+    "catalog": "Catálogo y requisitos",
+    "receiptDemo": "Demo de recibos v1",
+    "externalDemo": "Fixtures y comprobaciones v2",
+    "stripe": "Stripe test: plantilla de despliegue",
+    "stripeNote": "El conector inicial cubre stripe.refund.status.v1. La demo simula el proveedor; ejecutar una prueba real requiere credenciales y un reembolso de sandbox preparado.",
+    "flowKicker": "04 / ENTRE EL AGENTE Y EL SERVIDOR",
+    "flowTitle": "Una frontera de control explícita.",
+    "flow": [
+      "Identidad",
+      "Política y validación",
+      "Aprobación, si aplica",
+      "Intención auditada",
+      "Envío al destino",
+      "Respuesta y evidencia"
+    ],
+    "flowNote": "Esquema conceptual. El recibo requiere configuración de confianza; la reconciliación y la comprobación externa son pasos posteriores de solo lectura.",
+    "details": [
+      [
+        "Políticas y datos",
+        "Control por capacidad, validadores de argumentos y redacción de salida. La protección depende de las políticas y del alcance de cada validador; revisa los ejemplos antes de aplicarlos a datos reales."
+      ],
+      [
+        "Aprobaciones y auditoría",
+        "Aprobaciones vinculadas a la petición y registros de intención y resultado. El perfil de evidencia required exige enforce, auditoría estricta y claves de confianza configuradas."
+      ],
+      [
+        "Transportes y clientes",
+        "HTTP JSON POST, sin passthrough SSE. Stdio POSIX acotado y serial; no admite mensajes iniciados por el servidor. Las sesiones HTTP viven en el proceso y requieren afinidad. Generar una configuración de cliente no equivale a certificar un proveedor."
+      ],
+      [
+        "Límites de la evidencia",
+        "Las firmas no demuestran verdad física, causalidad, liquidación bancaria, completitud global ni ejecución exactamente una vez. Las observaciones tienen alcance y tiempo; un informe histórico no acredita el estado actual."
+      ]
+    ],
+    "profile": "Consultar el perfil soportado",
+    "installKicker": "05 / PRUÉBALO LOCALMENTE",
+    "installTitle": "De la política a la evidencia.",
+    "installIntro": "Instala la versión de esta página y elige una demo. No necesitas credenciales de proveedores para las simulaciones locales.",
+    "installSteps": [
+      "Instala MCPZT",
+      "Prueba un gateway HTTP",
+      "Explora un recibo tras un timeout",
+      "Contrasta una fuente simulada"
+    ],
+    "httpNote": "Genera los archivos y ejecuta el script desde su directorio. La demo comprueba sus resultados.",
+    "validation": "Validación y confianza",
+    "validationText": "Consulta las pruebas, los casos adversariales y los límites pendientes de la versión. La cobertura de líneas no es una garantía de seguridad.",
+    "testReport": "Informe de validación 0.6.0",
+    "release": "Notas de la versión",
+    "production": "Guía de producción",
+    "footer": "Control explícito. Evidencia con contexto.",
+    "author": "Creado por",
+    "contribute": "Contribuir",
+    "top": "Volver arriba",
+    "notFound": "Esta página no existe.",
+    "home": "Volver al inicio",
+    "policyTitle": "Antes de enviar: la política decide.",
+    "policyLabels": [
+      "Permitido",
+      "Denegado",
+      "Requiere aprobación"
+    ],
+    "policyIntro": "Resultados de la configuración GitHub del repositorio, ejecutada contra un servidor simulado. Una denegación o una aprobación pendiente no envían la llamada al destino.",
+    "policyCalls": "Llamadas al destino simulado",
+    "contractTitle": "Cada firma tiene una relación que comprobar.",
+    "contractIntro": "Explora los documentos del caso seleccionado. Los identificadores y compromisos enlazan la petición autorizada con el intento, el recibo y la observación posterior.",
+    "contractLabels": [
+      "Autorización",
+      "Intento",
+      "Recibo",
+      "Observación"
+    ],
+    "contractRoles": [
+      "Firma el gateway",
+      "Firma el gateway",
+      "Firma el destino",
+      "Firma el observador"
+    ],
+    "contractLinks": [
+      "Vincula la autorización",
+      "Vincula el permiso completo",
+      "Vincula la evidencia v1"
+    ],
+    "contractPresent": "Documento presente",
+    "contractMissing": "Todavía no hay documento",
+    "contractInspect": "Inspeccionar documento",
+    "contractFields": "Campos del fixture",
+    "contractEmpty": "En este punto no hay un documento de este tipo. Conserva esa ausencia: no equivale a fracaso ni a confirmación del efecto.",
+    "contractNote": "Mapa de vínculos declarados en los fixtures. La verificación criptográfica se realiza con la CLI y tus claves públicas de confianza, no en esta página.",
+    "contractGuides": "Contrato y recuperación paso a paso",
+    "contractSummaries": [
+      "Autoriza esta petición concreta; por sí sola no demuestra que se haya enviado.",
+      "Liga el intento a la autorización firmada mediante authorization_digest.",
+      "Liga la declaración del destino al permiso completo, petición e identificadores originales.",
+      "Liga el informe a la evidencia v1 completa y al informe anterior, si existe."
+    ],
+    "heroClient": "Agente / cliente MCP",
+    "heroGateway": "Políticas · validación · aprobación",
+    "heroDestination": "Servidor MCP",
+    "heroCaption": "El gateway controla el paso. La evidencia explica lo que se puede afirmar."
+  },
+  "en": {
+    "title": "MCPZT — Control and evidence for your MCP servers",
+    "description": "Control agent calls with policies, validation and approvals. Verifiable receipts and external checks with explicit trust boundaries.",
+    "skip": "Skip to content",
+    "menu": "Menu",
+    "language": "Language",
+    "nav": [
+      "Evidence",
+      "Examples",
+      "How it works",
+      "Install"
+    ],
+    "eyebrow": "OPEN SOURCE · SELF-HOSTED · MCP",
+    "hero": "Your agents act.<br><span>You set the rules.</span>",
+    "intro": "Control what they can execute. Inspect the evidence each action leaves behind.",
+    "introDetail": "Policies, validation and approvals in front of your MCP servers. Signed receipts and external checks to understand what happened, with explicit trust boundaries.",
+    "try": "Explore the demo",
+    "docs": "Documentation",
+    "copy": "Copy",
+    "copied": "Command copied.",
+    "copyFailed": "Could not copy. Select the command and copy it manually.",
+    "heroNote": "Python 3.11–3.14 · Apache-2.0 · No mandatory SaaS service",
+    "diagramTitle": "ONE CALL. THREE QUESTIONS.",
+    "diagram": [
+      [
+        "01",
+        "Is it allowed?",
+        "Policy and authorization"
+      ],
+      [
+        "02",
+        "What does the destination claim?",
+        "Signed, bound receipt"
+      ],
+      [
+        "03",
+        "What does another source report?",
+        "Scoped external check"
+      ]
+    ],
+    "diagramNote": "A signature authenticates a statement. On its own, it does not prove an external effect.",
+    "demoKicker": "01 / EXPLORE THE EVIDENCE",
+    "demoTitle": "A timeout is not the end of the story.",
+    "demoIntro": "A call loses its response. The gateway keeps the outcome unknown and queries the receipt without repeating the action. An observer then checks the claim against a configured source.",
+    "simulation": "LOCAL SIMULATION · NO PAYMENTS OR CALLS TO STRIPE",
+    "demoLabels": [
+      "Timeout",
+      "Receipt recovered",
+      "Contradiction",
+      "Match",
+      "Later failure",
+      "Wrong amount",
+      "Pending",
+      "Not found"
+    ],
+    "demoDescriptions": [
+      "Dispatch was attempted, but no response was observed. The effect remains unknown.",
+      "A read-only query recovers the destination’s signed committed claim. It does not establish that the external effect happened.",
+      "The receipt claims committed; the observer reports failed from the simulated source. The receipt signature can still be valid.",
+      "The observer reports succeeded with matching fields. The conclusion still depends on the source and the observer.",
+      "A later observation reports a failure. The earlier observation remains in the history.",
+      "The observed amount differs from the authorized request. The operation is not corroborated.",
+      "The simulated source reports a pending status. It is not turned into success or failure.",
+      "The query finds no record. This does not prove that the action never happened."
+    ],
+    "gateway": "Gateway",
+    "destination": "Destination",
+    "observer": "Observer",
+    "trace": "Destination method trace",
+    "once": "1 business call. 1 receipt query.",
+    "raw": "Open JSON fixture",
+    "fixtureDocs": "How to verify the fixtures",
+    "demoFallback": "The interactive view needs JavaScript. You can open the public fixtures and reproduce the demo with the CLI.",
+    "demoLimit": "Synthetic data from the 0.6.0 fixtures. Shared administration; independence is not proven. The browser displays records and does not verify signatures. Offline verification authenticates the observer, not a Stripe signature or the current external state.",
+    "reproduce": "Reproduce in a new directory",
+    "freshDir": "Use a new path for each run. The demo generates local keys: do not publish the entire directory.",
+    "layersKicker": "02 / SCOPED GUARANTEES",
+    "layersTitle": "Know what you know. And what you don’t.",
+    "layers": [
+      [
+        "01 / CONTROL",
+        "Authorize the call",
+        "Filter discovery, validate arguments and require approval where the policy calls for it.",
+        "Allowing or dispatching a call does not prove external execution."
+      ],
+      [
+        "02 / RECEIPT",
+        "Authenticate the claim",
+        "Bind the signed receipt to the same authorization, request and attempt. Requires a receipt-aware destination.",
+        "A destination can sign an incorrect statement."
+      ],
+      [
+        "03 / OBSERVATION",
+        "Check a source",
+        "An observer queries a configured source and appends its report to the evidence history.",
+        "The report depends on the observer and source; it does not prove independence or unique execution."
+      ]
+    ],
+    "examplesKicker": "03 / START WITH A REALISTIC CASE",
+    "examplesTitle": "Your tools. Your boundaries.",
+    "examplesIntro": "Starter configurations to adapt to your environment. Evidence is off in these six basic examples; receipts and external checks have separate demos.",
+    "examples": [
+      [
+        "filesystem-safe",
+        "Filesystem",
+        "Scoped reads and writes requiring approval.",
+        "Node.js · local filesystem root"
+      ],
+      [
+        "github-readonly",
+        "GitHub",
+        "Allowed queries and policy-controlled changes.",
+        "MCP server · GitHub credentials"
+      ],
+      [
+        "postgres-readonly",
+        "PostgreSQL",
+        "Validate SQL queries before dispatch.",
+        "MCP server · test database"
+      ],
+      [
+        "oidc-gateway",
+        "OIDC + CRM",
+        "Group-based permissions and output field redaction.",
+        "OIDC provider · CRM server"
+      ],
+      [
+        "protected-http-upstream",
+        "Protected HTTP",
+        "Separate client identity from the upstream credential.",
+        "HTTP upstream · server credential"
+      ],
+      [
+        "multi-mcp",
+        "Multi-MCP",
+        "Capability policies across multiple servers.",
+        "Example services · local configuration"
+      ]
+    ],
+    "config": "View configuration",
+    "catalog": "Example catalog and requirements",
+    "receiptDemo": "v1 receipt demo",
+    "externalDemo": "v2 fixtures and external checks",
+    "stripe": "Stripe test: deployment template",
+    "stripeNote": "The first connector covers stripe.refund.status.v1. The demo simulates the provider; a live test needs credentials and a prepared sandbox refund.",
+    "flowKicker": "04 / BETWEEN AGENT AND SERVER",
+    "flowTitle": "An explicit control boundary.",
+    "flow": [
+      "Identity",
+      "Policy and validation",
+      "Approval, if required",
+      "Audited intent",
+      "Dispatch to destination",
+      "Response and evidence"
+    ],
+    "flowNote": "Conceptual overview. Receipts require trust configuration; reconciliation and external checks are subsequent read-only steps.",
+    "details": [
+      [
+        "Policies and data",
+        "Capability-based control, argument validators and output redaction. Protection depends on policies and each validator’s scope; review the examples before using real data."
+      ],
+      [
+        "Approvals and audit",
+        "Request-bound approvals and intent/outcome records. The required evidence profile needs enforce mode, strict auditing and configured trust keys."
+      ],
+      [
+        "Transports and clients",
+        "HTTP JSON POST without SSE passthrough. Bounded, serial POSIX stdio; server-initiated messages are not supported. HTTP sessions are process-local and need affinity. Generating client configuration does not certify a provider."
+      ],
+      [
+        "Evidence limits",
+        "Signatures do not prove physical truth, causality, bank settlement, global completeness or exactly-once execution. Observations have scope and time; a historical report does not establish current state."
+      ]
+    ],
+    "profile": "Read the supported profile",
+    "installKicker": "05 / TRY IT LOCALLY",
+    "installTitle": "From policy to evidence.",
+    "installIntro": "Install this page’s version and choose a demo. The local simulations do not need provider credentials.",
+    "installSteps": [
+      "Install MCPZT",
+      "Try an HTTP gateway",
+      "Inspect a receipt after a timeout",
+      "Check a simulated source"
+    ],
+    "httpNote": "Generate the files and run the script from its directory. The demo checks its results.",
+    "validation": "Validation and trust",
+    "validationText": "Read the tests, adversarial cases and remaining limitations for this version. Line coverage is not a security guarantee.",
+    "testReport": "0.6.0 validation report",
+    "release": "Release notes",
+    "production": "Production guide",
+    "footer": "Explicit control. Evidence in context.",
+    "author": "Created by",
+    "contribute": "Contribute",
+    "top": "Back to top",
+    "notFound": "This page does not exist.",
+    "home": "Back to home",
+    "policyTitle": "Before dispatch: policy decides.",
+    "policyLabels": [
+      "Allowed",
+      "Denied",
+      "Approval required"
+    ],
+    "policyIntro": "Results from the repository’s GitHub configuration, run against a simulated server. A denial or pending approval does not dispatch the call.",
+    "policyCalls": "Calls to simulated destination",
+    "contractTitle": "Every signature has a relationship to check.",
+    "contractIntro": "Explore the documents in the selected case. Identifiers and commitments bind the authorized request to its attempt, receipt and subsequent observation.",
+    "contractLabels": [
+      "Authorization",
+      "Attempt",
+      "Receipt",
+      "Observation"
+    ],
+    "contractRoles": [
+      "Gateway signs",
+      "Gateway signs",
+      "Destination signs",
+      "Observer signs"
+    ],
+    "contractLinks": [
+      "Binds the authorization",
+      "Binds the complete permit",
+      "Binds the v1 evidence"
+    ],
+    "contractPresent": "Document present",
+    "contractMissing": "No document yet",
+    "contractInspect": "Inspect document",
+    "contractFields": "Fixture fields",
+    "contractEmpty": "There is no document of this type at this point. Preserve that absence: it is neither failure nor confirmation of an effect.",
+    "contractNote": "Map of bindings declared in the fixtures. Cryptographic verification uses the CLI and your trusted public keys, not this page.",
+    "contractGuides": "Contract and step-by-step recovery",
+    "contractSummaries": [
+      "Authorizes this exact request; it does not by itself establish dispatch.",
+      "Binds the attempt to the signed authorization through authorization_digest.",
+      "Binds the destination claim to the complete permit, request and original identifiers.",
+      "Binds the report to the complete v1 evidence and to the preceding report, if any."
+    ],
+    "heroClient": "Agent / MCP client",
+    "heroGateway": "Policy · validation · approval",
+    "heroDestination": "MCP server",
+    "heroCaption": "The gateway controls the path. Evidence explains what can be claimed."
+  }
+}

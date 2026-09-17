@@ -45,3 +45,8 @@ docs/PHASES.md
 /scratch
 .DS_Store
 Thumbs.db
+
+/docs/plans
+/docs/audit
+/landing/node_modules
+/landing/test-results

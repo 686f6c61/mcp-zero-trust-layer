@@ -1,0 +1,213 @@
+{
+  "simulation": true,
+  "provider_contacted": false,
+  "administration": "shared",
+  "operation_id": "op_25ce8a97717c498e88ed1adebe666afa",
+  "destination_methods": [
+    "tools/call",
+    "mcpzt/evidence/get"
+  ],
+  "provider_requests": [
+    {
+      "method": "GET",
+      "path": "/v1/account"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/refunds/re_demo"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/account"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/refunds/re_demo"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/account"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/refunds/re_demo"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/account"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/refunds/re_demo"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/account"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/refunds/re_demo"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/account"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/refunds/re_demo"
+    }
+  ],
+  "cases": [
+    {
+      "case": "signed-lie",
+      "result": "contradicted",
+      "reason": "STATUS_CONFLICT"
+    },
+    {
+      "case": "corroborated",
+      "result": "corroborated",
+      "reason": "STATUS_MATCH"
+    },
+    {
+      "case": "later-failure",
+      "result": "contradicted",
+      "reason": "STATUS_CONFLICT"
+    },
+    {
+      "case": "wrong-amount",
+      "result": "contradicted",
+      "reason": "FIELD_MISMATCH"
+    },
+    {
+      "case": "pending",
+      "result": "pending",
+      "reason": "SOURCE_PENDING"
+    },
+    {
+      "case": "not-found",
+      "result": "unknown",
+      "reason": "SOURCE_NOT_FOUND"
+    }
+  ],
+  "verdict": {
+    "integrity": "valid",
+    "authority": "trusted_destination",
+    "binding": "valid",
+    "claim": "destination_commit_attested",
+    "effect": "committed",
+    "request_content": "not_provided",
+    "response_content": "not_provided",
+    "completeness": "unknown",
+    "execution_uniqueness": "not_proven",
+    "trusted_timestamp": false,
+    "rejection": null,
+    "effect_basis": "destination_attested",
+    "gateway_observation": "not_in_bundle",
+    "external_check": {
+      "verification": "observer_signature_verified",
+      "result": "observer_attested",
+      "history": [
+        {
+          "check_id": "check_c14787d21aaa4f08926758076262a296",
+          "reported_result": "contradicted",
+          "reason": "STATUS_CONFLICT",
+          "source_status": "failed",
+          "checked_at": 1789668758,
+          "source_recorded_at": 1789668758,
+          "expires_at": 1789669058,
+          "fresh": true,
+          "source": "stripe",
+          "scope": "stripe.refund.status.v1",
+          "account": "acct_demo",
+          "observer": "observer-demo",
+          "administration": "shared",
+          "administration_basis": "operator_configured_not_proven"
+        },
+        {
+          "check_id": "check_205eaaba9d614505a47a099a0212dbb6",
+          "reported_result": "corroborated",
+          "reason": "STATUS_MATCH",
+          "source_status": "succeeded",
+          "checked_at": 1789668758,
+          "source_recorded_at": 1789668758,
+          "expires_at": 1789669058,
+          "fresh": true,
+          "source": "stripe",
+          "scope": "stripe.refund.status.v1",
+          "account": "acct_demo",
+          "observer": "observer-demo",
+          "administration": "shared",
+          "administration_basis": "operator_configured_not_proven"
+        },
+        {
+          "check_id": "check_e8ac509b944c43dfa63ca466f9e63994",
+          "reported_result": "contradicted",
+          "reason": "STATUS_CONFLICT",
+          "source_status": "failed",
+          "checked_at": 1789668758,
+          "source_recorded_at": 1789668758,
+          "expires_at": 1789669058,
+          "fresh": true,
+          "source": "stripe",
+          "scope": "stripe.refund.status.v1",
+          "account": "acct_demo",
+          "observer": "observer-demo",
+          "administration": "shared",
+          "administration_basis": "operator_configured_not_proven"
+        },
+        {
+          "check_id": "check_de88872e7fd747839ef0cc34777a0f5c",
+          "reported_result": "contradicted",
+          "reason": "FIELD_MISMATCH",
+          "source_status": null,
+          "checked_at": 1789668758,
+          "source_recorded_at": 1789668758,
+          "expires_at": 1789669058,
+          "fresh": true,
+          "source": "stripe",
+          "scope": "stripe.refund.status.v1",
+          "account": "acct_demo",
+          "observer": "observer-demo",
+          "administration": "shared",
+          "administration_basis": "operator_configured_not_proven"
+        },
+        {
+          "check_id": "check_99c9d80b2fbb4526aeefcc7c71fb746e",
+          "reported_result": "pending",
+          "reason": "SOURCE_PENDING",
+          "source_status": "pending",
+          "checked_at": 1789668758,
+          "source_recorded_at": 1789668758,
+          "expires_at": 1789669058,
+          "fresh": true,
+          "source": "stripe",
+          "scope": "stripe.refund.status.v1",
+          "account": "acct_demo",
+          "observer": "observer-demo",
+          "administration": "shared",
+          "administration_basis": "operator_configured_not_proven"
+        },
+        {
+          "check_id": "check_796271cf4a354c95b79c7f7d11728c7c",
+          "reported_result": "unknown",
+          "reason": "SOURCE_NOT_FOUND",
+          "source_status": null,
+          "checked_at": 1789668758,
+          "source_recorded_at": null,
+          "expires_at": 1789669058,
+          "fresh": true,
+          "source": "stripe",
+          "scope": "stripe.refund.status.v1",
+          "account": "acct_demo",
+          "observer": "observer-demo",
+          "administration": "shared",
+          "administration_basis": "operator_configured_not_proven"
+        }
+      ],
+      "provider_signature": "not_provided",
+      "independence": "not_proven",
+      "history_completeness": "unknown",
+      "current_state": "not_established_offline"
+    }
+  }
+}

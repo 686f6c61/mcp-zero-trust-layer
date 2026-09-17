@@ -1,0 +1,7 @@
+{
+  "name": "mcpzt-landing-checks",
+  "private": true,
+  "type": "module",
+  "scripts": {"test": "node --test tests/browser.test.mjs"},
+  "devDependencies": {"playwright": "1.61.1", "@axe-core/playwright": "4.11.1"}
+}

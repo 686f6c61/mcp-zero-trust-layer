@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="$lang">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>$title</title>
+<meta name="description" content="$description">
+<meta name="theme-color" content="#111112">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="MCPZT">
+<meta property="og:title" content="$title">
+<meta property="og:description" content="$description">
+<meta property="og:image:alt" content="MCPZT — Policies, receipts, external checks">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="$title">
+<meta name="twitter:description" content="$description">
+$seo
+<link rel="icon" href="$icon" type="image/svg+xml">
+<link rel="stylesheet" href="$css">
+<script src="$js" defer></script>
+$analytics
+</head>
+<body id="top" data-copied="$copied" data-copy-failed="$copyFailed">
+<a class="skip" href="#main">$skip</a>
+<div class="sheet">
+<header class="topbar">
+<a class="brand" href="/$lang/" aria-label="MCPZT"><span class="brand-dot" aria-hidden="true"></span>MCPZT<span class="brand-mark" aria-hidden="true">_</span></a>
+<button type="button" class="menu-toggle" aria-expanded="false" aria-controls="navigation">$menu <span aria-hidden="true">+</span></button>
+<nav id="navigation" aria-label="MCPZT">$navLinks</nav>
+<div class="header-actions"><a class="version" href="$repo/releases/tag/v$version">v$version</a><nav class="language" aria-label="$language">$langLinks</nav></div>
+</header>
+<main id="main">
+<section class="hero" aria-labelledby="hero-title">
+<div class="hero-copy"><p class="kicker">$eyebrow</p><h1 id="hero-title">$hero</h1><p class="lead">$intro</p><p class="intro-detail">$introDetail</p><div class="cta"><a class="button primary" href="#evidence" data-umami-event="explore-demo">$try <span aria-hidden="true">↓</span></a><a class="button" href="$repo" data-umami-event="github">GitHub <span aria-hidden="true">↗</span></a><a class="text-link" href="${docs}README.md" data-umami-event="docs">$docsLabel</a></div>$installCommand<p class="small">$heroNote</p></div>
+<aside class="hero-diagram" aria-labelledby="diagram-title"><div class="architecture-mini" aria-label="$heroCaption"><div class="mini-endpoint"><span class="mini-symbol" aria-hidden="true">{ }</span>$heroClient</div><span class="mini-connector mono" aria-hidden="true">tools/call ↓</span><div class="mini-gateway"><span class="mini-wordmark">MCPZT</span><span>$heroGateway</span></div><span class="mini-connector mono" aria-hidden="true">↓</span><div class="mini-endpoint"><span class="mini-symbol" aria-hidden="true">[ ]</span>$heroDestination</div></div><p class="kicker" id="diagram-title">$diagramTitle</p><ol class="questions">$diagramItems</ol><p class="diagram-note">$diagramNote</p><div class="diagram-footer mono"><span>tools/call</span><span>MCP ZERO TRUST LAYER</span></div></aside>
+</section>
+<section id="evidence" class="section evidence" aria-labelledby="evidence-title">
+<div class="section-heading"><p class="kicker">$demoKicker</p><h2 id="evidence-title">$demoTitle</h2><p class="section-intro">$demoIntro</p></div>
+<div class="demo" data-scenarios="$scenarios" data-fixtures="$fixtureUrl">
+<p class="simulation mono">$simulation</p>
+<div class="scenario-controls" role="group" aria-label="$demoTitle">$scenarioButtons</div>
+<div id="demo-panel" aria-live="polite" aria-atomic="true">
+<div class="demo-description">$descriptions</div>
+<dl class="verdicts"><div><dt>$gateway</dt><dd id="gateway-value">unknown</dd></div><div><dt>$destination</dt><dd id="destination-value">—</dd></div><div><dt>$observer</dt><dd id="observer-value">—</dd></div></dl>
+<p id="reason" class="mono reason"></p>
+<div class="trace"><p class="kicker">$trace</p><pre><code id="method-trace">tools/call</code></pre><p id="once" hidden>$once</p></div>
+</div>
+<div class="contract-map" data-present="$contractPresent" data-missing="$contractMissing">
+<div class="contract-heading"><p class="kicker">SIGNED EVIDENCE / v1 + v2</p><h3>$contractTitle</h3><p>$contractIntro</p></div>
+<div class="contract-nodes" role="group" aria-label="$contractInspect">$contractNodes</div>
+<ol class="contract-relations">$contractRelations</ol>
+<div id="contract-inspector" class="contract-inspector" aria-live="polite"><div class="inspector-heading"><span class="mono">$contractFields</span><strong id="contract-actor">gateway-demo</strong></div><div class="contract-explanation">$contractSummaries</div><dl id="contract-fields"></dl><p id="contract-empty" hidden>$contractEmpty</p></div>
+<p class="contract-note">$contractNote</p><a class="contract-guide" href="${docs}EVIDENCE_OPERATIONS.md">$contractGuides ↗</a>
+</div><div class="demo-links"><a id="raw-fixture" href="$fixtureUrl/bundle-at-timeout.json" data-umami-event="open-fixture">$raw <span aria-hidden="true">↗</span></a><a href="$repo/tree/$sourceRef/examples/evidence/external-checks">$fixtureDocs <span aria-hidden="true">↗</span></a></div>
+<noscript><p class="notice">$demoFallback</p></noscript>
+<p id="demo-error" class="notice" hidden>$demoFallback</p>
+</div>
+<p class="small demo-limit">$demoLimit</p><details class="reproduce"><summary>$reproduce</summary>$demoCommand<p class="small">$freshDir</p></details>
+</section>
+<section class="section" aria-labelledby="layers-title"><div class="section-heading"><p class="kicker">$layersKicker</p><h2 id="layers-title">$layersTitle</h2></div><div class="layers">$layerCards</div><div class="policy-demo"><h3>$policyTitle</h3><p>$policyIntro</p><div class="policy-cases">$policyCases</div><p><a href="$fixtureUrl/policy-cases.json">$raw ↗</a></p></div></section>
+<section id="examples" class="section examples-section" aria-labelledby="examples-title"><div class="section-heading"><p class="kicker">$examplesKicker</p><h2 id="examples-title">$examplesTitle</h2><p class="section-intro">$examplesIntro</p></div><div class="examples">$exampleCards</div><p class="catalog">$catalogLink</p><div class="evidence-examples"><div class="link-list">$demoLinks</div><p>$stripeNote</p></div></section>
+<section id="how" class="section" aria-labelledby="how-title"><div class="section-heading"><p class="kicker">$flowKicker</p><h2 id="how-title">$flowTitle</h2></div><ol class="flow">$flowItems</ol><p class="small">$flowNote</p><div class="details-grid">$detailItems</div><p><a href="${docs}SUPPORTED_PROFILE.md">$profile <span aria-hidden="true">↗</span></a></p></section>
+<section id="install" class="section install-section" aria-labelledby="install-title"><div class="section-heading"><p class="kicker">$installKicker</p><h2 id="install-title">$installTitle</h2><p class="section-intro">$installIntro</p></div><div class="install-grid">$installCards</div><details><summary>Docker / GHCR</summary>$dockerCommand</details><aside class="validation"><h3>$validation</h3><p>$validationText</p><div class="link-list">$validationLinks</div></aside></section>
+</main>
+<footer class="section footer"><div><a class="brand" href="/$lang/">MCPZT<span class="brand-mark" aria-hidden="true">_</span></a><p>$footer</p><p class="small">$author <a href="https://github.com/686f6c61">@686f6c61</a> · Apache-2.0</p></div><div class="footer-links"><a href="$repo/blob/$sourceRef/CONTRIBUTING.md">$contribute</a><a href="https://pypi.org/project/mcp-zero-trust-layer/$version/">PyPI v$version</a><a href="https://x.com/686f6c61">X / @686f6c61</a><a href="#top">$top ↑</a></div></footer>
+</div><p id="copy-status" class="copy-status" role="status" aria-live="polite"></p>
+</body>
+</html>

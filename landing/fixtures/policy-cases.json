@@ -1,0 +1,94 @@
+{
+  "simulation": true,
+  "provider_contacted": false,
+  "version": "0.6.0",
+  "config": "examples/github-readonly/mcpzt.yaml",
+  "config_sha256": "b0547d37c2adfed4380f13a05fbd25e559eed449ff87b0af9f7034cce7d1eef4",
+  "cases": [
+    {
+      "case": "allowed",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "github.search_issues",
+          "arguments": {
+            "q": "security"
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Synthetic issue search result"
+            }
+          ]
+        }
+      },
+      "upstream_calls": 1
+    },
+    {
+      "case": "denied",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+          "name": "github.delete_repository",
+          "arguments": {}
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "error": {
+          "code": -32001,
+          "message": "Request denied by policy",
+          "data": {
+            "decision": "deny",
+            "policy_id": null,
+            "reason": "default decision: deny",
+            "validation_errors": []
+          }
+        }
+      },
+      "upstream_calls": 0
+    },
+    {
+      "case": "approval",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+          "name": "github.merge_pull_request",
+          "arguments": {
+            "repo": "demo",
+            "pull_number": 1
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "error": {
+          "code": -32010,
+          "message": "Approval required",
+          "data": {
+            "decision": "require_approval",
+            "policy_id": "critical-actions-need-approval",
+            "reason": "matched policy critical-actions-need-approval",
+            "approval_id": "appr_5d1d28d871464cbe99ce7901fe74a99d",
+            "expires_at": "2026-09-17T19:22:12.134061+00:00"
+          }
+        }
+      },
+      "upstream_calls": 0
+    }
+  ]
+}

@@ -1,0 +1,137 @@
+{
+  "version": 2,
+  "evidence": {
+    "permit": {
+      "attempt": {
+        "payload": {
+          "attempt_id": "attempt_938a16c566674517934dee5ea6ca0bfc",
+          "audience": "refund-demo",
+          "authorization_digest": "57fe026ce6b13f6c93958e0bd9cf49a82561920d07c7dabedf33bea5ea16b269",
+          "issuer": "gateway-demo",
+          "nonce": "6600d3dca6fc8a6e0b7e763dd54a81734f68e26ec4f29f4e3d7278063690f460",
+          "operation_id": "op_25ce8a97717c498e88ed1adebe666afa",
+          "tenant": "demo"
+        },
+        "protected": {
+          "alg": "Ed25519",
+          "kid": "gateway-demo",
+          "kind": "attempt",
+          "version": 1
+        },
+        "signature": "AUA6RZxlAdrAL6E6cMKrWwXT_yaK_dnmAVKpLRE-VtfNsj8m0l13zjJSd2hW8-OUIyE4bWiFjvYG89aqtT5uAQ"
+      },
+      "authorization": {
+        "payload": {
+          "approval_id": null,
+          "audience": "refund-demo",
+          "authorization_id": "auth_8678c87a1cf648ff8f4bb61ba9b00248",
+          "decision": "allow",
+          "expires_at": 1789668818,
+          "issued_at": 1789668758,
+          "issuer": "gateway-demo",
+          "method": "tools/call",
+          "operation_id": "op_25ce8a97717c498e88ed1adebe666afa",
+          "policy_binding": "f64edcb3d2042c1d70d90695bae90fa1c05ddd78197e0b07050d4c46e948f61f",
+          "principal": "b86629a23e2804a43cd9b88d00f33519a24ee5aa0317be8aa77a6919d21cef0b",
+          "request_digest": "a1985dce1f64dc6058e3d9c5cae411651ab511f949ba693d99990d240acd9ef3",
+          "request_nonce": "d489c13cc155b66c7d538471bd5ccaee1d74e5a8b96b27ce5e8ddd30373dc18c",
+          "tenant": "demo",
+          "tool": "refund"
+        },
+        "protected": {
+          "alg": "Ed25519",
+          "kid": "gateway-demo",
+          "kind": "authorization",
+          "version": 1
+        },
+        "signature": "zbMHar0Fb6cWuCj9Jqn-_Yig2zDTop5b1K74orYNuXozQRydznPIYbCbLzCKosBigAIVM0D3SnFm_83qv08sBQ"
+      }
+    },
+    "receipt": {
+      "payload": {
+        "attempt_digest": "f11b38ed1510743d2e8dac647604b3e57617ef8d96315b8c22dabe69fb758ad7",
+        "attempt_id": "attempt_938a16c566674517934dee5ea6ca0bfc",
+        "audience": "gateway-demo",
+        "authorization_id": "auth_8678c87a1cf648ff8f4bb61ba9b00248",
+        "effect": "committed",
+        "issuer": "refund-demo",
+        "operation_id": "op_25ce8a97717c498e88ed1adebe666afa",
+        "receipt_id": "demo-receipt",
+        "recorded_at": 1789668758,
+        "request_digest": "a1985dce1f64dc6058e3d9c5cae411651ab511f949ba693d99990d240acd9ef3",
+        "response_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+        "response_nonce": "1111111111111111111111111111111111111111111111111111111111111111",
+        "scope": "stripe.refund.status.v1",
+        "sequence": 1,
+        "tenant": "demo",
+        "transaction_ref": "re_demo"
+      },
+      "protected": {
+        "alg": "Ed25519",
+        "kid": "destination-demo",
+        "kind": "receipt",
+        "version": 1
+      },
+      "signature": "sN7IZ1KKH-4ATSKYMi8uICP-L8PBOOdLvsBNQY7yuFwZLeVI1qYeWnm3nuYYKiQrzviOqEphLRa2A9ifDS70Bw"
+    },
+    "version": 1
+  },
+  "observations": [
+    {
+      "payload": {
+        "account": "acct_demo",
+        "check_id": "check_c14787d21aaa4f08926758076262a296",
+        "checked_at": 1789668758,
+        "destination": "refund-demo",
+        "evidence_digest": "9ada40ba071733dfbb0e7f26bc2c4d2b1979c81faefd7b6e3d16ca1ee8f9c34d",
+        "expires_at": 1789669058,
+        "issuer": "observer-demo",
+        "previous_digest": null,
+        "reason": "STATUS_CONFLICT",
+        "result": "contradicted",
+        "scope": "stripe.refund.status.v1",
+        "source": "stripe",
+        "source_digest": "fd9a20919acbc148c6e669f7320076cdb25aad69e5044f3b347583ed341ecbee",
+        "source_nonce": "20981a2dc40986f05d8aa9ece7f190dc98bcf42e3a4e71f171ab9e70b042f3c4",
+        "source_recorded_at": 1789668758,
+        "source_status": "failed",
+        "tenant": "demo"
+      },
+      "protected": {
+        "alg": "Ed25519",
+        "kid": "observer-demo",
+        "kind": "external_observation",
+        "version": 2
+      },
+      "signature": "22hrZiSPejUOCNOObUbKxZ2rNKmJ2x38FKT49A-lm6tcpSQ7Hm0g7hj1vYFU7OedaV7lJZFkFS48ZREscAPQDw"
+    },
+    {
+      "payload": {
+        "account": "acct_demo",
+        "check_id": "check_205eaaba9d614505a47a099a0212dbb6",
+        "checked_at": 1789668758,
+        "destination": "refund-demo",
+        "evidence_digest": "9ada40ba071733dfbb0e7f26bc2c4d2b1979c81faefd7b6e3d16ca1ee8f9c34d",
+        "expires_at": 1789669058,
+        "issuer": "observer-demo",
+        "previous_digest": "168d1cc05bd1c25cbc98be9255aee2f6893f2d690ab482848b81aa2eea870e08",
+        "reason": "STATUS_MATCH",
+        "result": "corroborated",
+        "scope": "stripe.refund.status.v1",
+        "source": "stripe",
+        "source_digest": "3d28ceb01a5309d5317183f0608276d7e700ba912e17f5608ee295ed63dacee1",
+        "source_nonce": "c25e41efa669536bc9b049a2c1dffbcd83005eccf52714120eec73bf1364dcd0",
+        "source_recorded_at": 1789668758,
+        "source_status": "succeeded",
+        "tenant": "demo"
+      },
+      "protected": {
+        "alg": "Ed25519",
+        "kid": "observer-demo",
+        "kind": "external_observation",
+        "version": 2
+      },
+      "signature": "9m7cejR1v7RUeKS1Sb9OUiBZymcXjbTZbWy8Y_2J1E1Eo8WPVa7lcSTOW57lVN-pqHxigjnHxSM_0RAElqncDA"
+    }
+  ]
+}

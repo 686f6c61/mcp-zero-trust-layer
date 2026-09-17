@@ -96,3 +96,9 @@ temp/
 /internal/
 /notes/
 /scratch/
+
+# Landing build and browser checks
+/landing/node_modules/
+/landing/test-results/
+/landing/__pycache__/
+/dist/

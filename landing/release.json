@@ -1,0 +1,8 @@
+{
+  "version": "0.6.0",
+  "repository": "https://github.com/686f6c61/mcp-zero-trust-layer",
+  "analytics_script": "https://analytics.686f6c61.dev/script.js",
+  "analytics_id": "3f8329c1-fea0-4ecb-af9a-b149c2a17c46",
+  "site_url": "https://mcp-zero-trust.686f6c61.dev",
+  "source_ref": "main"
+}
