@@ -9,10 +9,13 @@ def get(path,headers=None):
     try: return opener.open(Request(sys.argv[1]+path,headers=headers or {}))
     except HTTPError as response: return response
 r=get('/')
-assert r.status==302 and r.headers['Location'].endswith('/es/'),dict(r.headers)
+assert r.status==302 and r.headers['Location']=='/es/',dict(r.headers)
 r=get('/',{'Cookie':'mcpzt_lang=en'})
-assert r.status==302 and r.headers['Location'].endswith('/en/')
+assert r.status==302 and r.headers['Location']=='/en/'
 for lang in ['es','en']:
+    r=get('/'+lang, {'X-Forwarded-Proto':'https'})
+    assert r.status==301 and r.headers['Location']=='/'+lang+'/'
+
     r=get('/'+lang+'/')
     assert r.status==200
     assert r.headers['X-Content-Type-Options']=='nosniff'
