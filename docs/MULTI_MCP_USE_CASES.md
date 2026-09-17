@@ -22,7 +22,9 @@ MCP Zero Trust Layer
 
 The route determines the logical server. A request sent to `/mcp/github` is evaluated against policies for the `github` server and then, if allowed, forwarded to the GitHub upstream. A request sent to `/mcp/postgres` is evaluated separately and forwarded to the Postgres upstream. This route-level separation is what prevents policies for one MCP from accidentally authorizing another MCP.
 
-The integration test uses local fake HTTP MCP upstreams. That keeps the test deterministic and credential-free, but it still exercises the real MCPZT HTTP app, the real policy pipeline, the real validators, the real approval store, the real output enforcer, and the real HTTP upstream client.
+The integration test loads the published YAML directly and uses local fake HTTP MCP upstreams, replacing only endpoints and temporary state/path locations. That keeps the test deterministic and credential-free, but it still exercises the real MCPZT HTTP app, the real policy pipeline, the real validators, the real approval store, the real output enforcer, and the real HTTP upstream client.
+
+In 0.6.0 this example remains a policy-enforcement scenario with evidence off. Its synthetic services do not issue destination receipts and cannot be assumed compatible with `evidence.mode: required`. See the [example matrix](../examples/README.md) for v1 ledger receipts, v2 observer fixtures and the separate Stripe sandbox integration. Lifecycle permissions cover `initialize` and `ping` without permitting similarly named business tools.
 
 ## Example Config
 

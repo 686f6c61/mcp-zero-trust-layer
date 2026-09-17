@@ -37,6 +37,13 @@ capability_mappings:
           - destructive
 
 policies:
+  # Protocol setup is allowed; business tools still require their own policies.
+  - id: allow-mcp-lifecycle
+    effect: allow
+    match:
+      capability_type: method
+      capabilities: [initialize, ping]
+
   - id: allow-github-read
     effect: allow
     match:

@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from mcp_zero_trust_layer import __version__
 from mcp_zero_trust_layer.config.models import MCPZTConfig
 from mcp_zero_trust_layer.evidence.crypto import encode
 from mcp_zero_trust_layer.evidence.destination import SCOPE
@@ -43,7 +44,11 @@ def create_demo(directory: Path) -> MCPZTConfig:
                          "private_key_file": str(directory / "gateway.key"),
                          "trust_store": str(directory / "trust.json"),
                          "store": str(directory / "evidence.sqlite3")}}],
-        "policies": [{"id": "refund-limit", "effect": "allow", "match": {"method": "tools/call",
+        "policies": [{"id": "allow-lifecycle", "effect": "allow", "match": {
+                        "capability_type": "method", "capabilities": ["initialize", "ping"]}},
+                     {"id": "show-refund", "effect": "allow", "match": {
+                         "method": "tools/list", "capability": "refund"}},
+                     {"id": "refund-limit", "effect": "allow", "match": {"method": "tools/call",
                         "capability": "refund"}, "when": {"args.amount_minor": {"in": [5000]}}}],
         "approvals": {"backend": "sqlite", "path": str(directory / "evidence.sqlite3")},
         "audit": {"path": str(directory / "audit.jsonl")},
@@ -60,11 +65,11 @@ def run_demo(directory: Path) -> dict[str, Any]:
     server = cfg.servers[0]
     peer = StdioProcessUpstream(server)
     try:
-        peer.send(server, {"jsonrpc": "2.0", "id": 0, "method": "initialize",
-                           "params": {"protocolVersion": "2025-11-25", "capabilities": {},
-                                      "clientInfo": {"name": "mcpzt-demo", "version": "0.5.0"}}})
-        peer.send(server, {"jsonrpc": "2.0", "method": "notifications/initialized"})
         pipeline = MCPPipeline(cfg, peer)
+        pipeline.handle("refund", {"jsonrpc": "2.0", "id": 0, "method": "initialize",
+                           "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+                                      "clientInfo": {"name": "mcpzt-demo", "version": __version__}}})
+        pipeline.handle("refund", {"jsonrpc": "2.0", "method": "notifications/initialized"})
         outcomes = []
         for number, amount in enumerate((5000, 50000), start=1):
             result = pipeline.handle("refund", {"jsonrpc": "2.0", "id": number,

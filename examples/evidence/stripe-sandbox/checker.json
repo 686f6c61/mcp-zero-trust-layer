@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "adapter": "stripe_refund",
+  "tenant": "sandbox-tenant",
+  "destination": "refund-service",
+  "receipt_scope": "stripe.refund.status.v1",
+  "tool": "refund",
+  "account": "acct_example",
+  "api_key_env": "MCPZT_STRIPE_TEST_KEY",
+  "observer_key_id": "observer-1",
+  "observer_private_key_file": "observer.key",
+  "observer_trust_file": "observers.json",
+  "freshness_seconds": 300
+}

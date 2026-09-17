@@ -1,6 +1,10 @@
-# Destination receipts — experimental v1 profile (MCPZT 0.5.0)
+# Destination receipts — experimental v1 profile (MCPZT 0.6.0)
+
+MCPZT 0.6.0 preserves this v1 wire/signature profile and adds [read-only external checks and v2 exports](EXTERNAL_CHECKS.md). Export now defaults to a v2 wrapper; use `--version 1` for an older verifier. Offline observer attestations never become provider-signed proof of execution.
 
 MCPZT can bind an authorization to a dispatched tool call and verify a receipt signed by a cooperating destination. The feature is opt-in per upstream. It does not make an arbitrary MCP server produce receipts, and signing a gateway log is not independent confirmation of a business effect.
+
+For migration, command selection and incident handling, see [evidence operations](EVIDENCE_OPERATIONS.md). The v1 wire profile was introduced in 0.5.0 and remains unchanged.
 
 ## Try the complete local flow
 

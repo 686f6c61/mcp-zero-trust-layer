@@ -1,4 +1,8 @@
-# Supported runtime profile (0.5.0)
+# Supported runtime profile (0.6.0)
+
+See the [upgrade and evidence operations guide](EVIDENCE_OPERATIONS.md) for export/schema compatibility and recovery procedures.
+
+0.6.0 adds [read-only external checks](EXTERNAL_CHECKS.md) for configured Stripe test-mode refund status and v2 exports containing observer attestations. It does not add a provider signature, proof of settlement or independent proof of execution. V1 wire/signature compatibility is preserved; older offline verifiers need an explicit `export --version 1`, which omits external checks.
 
 0.5.0 adds opt-in [destination receipts](EVIDENCE.md). Their scope is cooperating `tools/call` destinations over the existing HTTP JSON/POSIX stdio transports. The protocol does not add SSE or universal effect confirmation. Enabled servers require strict enforce mode and a shared private SQLite approvals/evidence database; see the evidence guide before migration. Default off-mode retains the existing approval binding. Duplicate-key JSON and explicit NaN/infinity are rejected on protocol ingress.
 

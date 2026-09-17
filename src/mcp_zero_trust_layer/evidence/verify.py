@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from mcp_zero_trust_layer.evidence.canonical import canonical, digest
+from mcp_zero_trust_layer.evidence.check_models import ObserverTrust
 from mcp_zero_trust_layer.evidence.crypto import verify_signature
 from mcp_zero_trust_layer.evidence.models import (
     Attempt,
@@ -31,7 +32,8 @@ def verify_permit(permit: Permit, trust: TrustStore, *, now: int | None = None
     return auth
 
 
-def verify_bundle(raw: Any, trust: TrustStore, *, request: Any = None, response: Any = None
+def verify_bundle(raw: Any, trust: TrustStore, *, request: Any = None, response: Any = None,
+                  observers: ObserverTrust | None = None, now: int | None = None
                   ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "integrity": "unverified", "authority": "unverified", "binding": "unverified",
@@ -39,9 +41,15 @@ def verify_bundle(raw: Any, trust: TrustStore, *, request: Any = None, response:
         "response_content": "not_provided", "completeness": "unknown",
         "execution_uniqueness": "not_proven", "trusted_timestamp": False,
         "rejection": None,
+        "effect_basis": "not_established", "gateway_observation": "not_in_bundle",
+        "external_check": {"verification": "not_provided", "result": "unknown",
+                           "provider_signature": "not_provided", "independence": "not_proven"},
     }
     try:
         canonical(raw)
+        if isinstance(raw, dict) and raw.get("version") == 2:
+            from mcp_zero_trust_layer.evidence.checks import verify_checked
+            return verify_checked(raw, trust, observers, request=request, response=response, now=now)
         bundle = Bundle.model_validate(raw)
         auth = verify_permit(bundle.permit, trust)
         result.update(integrity="valid", authority="trusted_gateway", binding="valid",
@@ -69,7 +77,7 @@ def verify_bundle(raw: Any, trust: TrustStore, *, request: Any = None, response:
                 raise ValueError("RESPONSE_MISMATCH")
             result["response_content"] = "verified"
         result.update(authority="trusted_destination", claim="destination_receipt_verified",
-                      effect=receipt.effect)
+                      effect=receipt.effect, effect_basis="destination_attested")
         if receipt.effect == "committed":
             result["claim"] = "destination_commit_attested"
         return result

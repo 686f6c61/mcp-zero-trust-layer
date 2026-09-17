@@ -55,7 +55,13 @@ MCPZT is built for that missing layer. It treats every MCP interaction as someth
 
 The result is a boring but useful control point. Boring is good here. You want a deterministic layer that can explain why it allowed a call, why it denied a call, why it created an approval, and whether the upstream server was actually contacted.
 
-## 0.5.0 destination receipts
+Documentation: [guide index](docs/README.md), [0.6.0 upgrade and evidence operations](docs/EVIDENCE_OPERATIONS.md), and [executable examples](examples/README.md).
+
+## 0.6.0 external checks and destination receipts
+
+Read-only external checks now contrast a destination's signed claim with a configured source. V2 exports preserve the original receipt and a chain of observer reports, including contradictions and later state changes. The first adapter queries Stripe **test-mode** refund status; it never creates or retries a refund. Offline verification authenticates the observer's report, not a provider signature or independently proven execution.
+
+Run `mcpzt evidence check-demo --directory /tmp/mcpzt-check-demo` for a reproducible signed-lie/timeout example with a **simulated** provider. See [external checks, trust boundaries and sandbox setup](docs/EXTERNAL_CHECKS.md) for the contract, cases and CLI instructions. A live sandbox check requires your configured credentials and an existing bound operation.
 
 Opt-in destination-signed receipts now bind an authorization, tool request and result. The gateway verifies configured signing authorities before filtering output, persists attempts with SQLite approval consumption, and supports read-only reconciliation after a lost response. `mcpzt evidence demo --directory /tmp/mcpzt-receipts-demo` runs a complete local refund-ledger example; `mcpzt evidence verify` checks exported commitments offline.
 
@@ -63,7 +69,7 @@ This confirms a statement by a trusted destination within its configured scope, 
 
 ## Compatibility and upgrade boundary
 
-Read [the supported runtime profile](docs/SUPPORTED_PROFILE.md) before upgrading. The 0.4.0 hardening fixed approval/audit concurrency and enforcement gaps, isolated authenticated HTTP sessions, and invalidated old approvals without its request binding. HTTP upstreams must return JSON. Stdio is a bounded POSIX serial profile; server-initiated messages are rejected explicitly. Gateway observations alone do not provide independent proof of downstream execution. In 0.5.0 evidence remains off by default; enabling it requires a shared private approvals/evidence SQLite database and fresh approvals. Ambiguous duplicate-key JSON and explicit nonfinite constants are rejected at ingress.
+Read [the supported runtime profile](docs/SUPPORTED_PROFILE.md) before upgrading. The 0.4.0 hardening fixed approval/audit concurrency and enforcement gaps, isolated authenticated HTTP sessions, and invalidated old approvals without its request binding. HTTP upstreams must return JSON. Stdio is a bounded POSIX serial profile; server-initiated messages are rejected explicitly. Gateway observations alone do not provide independent proof of downstream execution. In 0.6.0 evidence remains off by default; enabling it requires a shared private approvals/evidence SQLite database and fresh approvals. Ambiguous duplicate-key JSON and explicit nonfinite constants are rejected at ingress.
 
 [Client configuration and provider compatibility](docs/CLIENT_COMPATIBILITY.md) covers Grok Build, xAI remote MCP, Codex, Gemini, VS Code, Cursor and Claude, distinguishing generated configuration from live-provider testing. [Validator limits](docs/VALIDATOR_LIMITS.md) describe the conservative SQL/email/input contracts.
 
@@ -275,7 +281,7 @@ mcpzt client config --config mcpzt.yaml --kind json
 For command-based MCP servers, use the stdio wrapper. This mode keeps stdout reserved for MCP protocol traffic, so audit output must go to a file rather than stdout.
 
 ```bash
-mcpzt wrap --config examples/filesystem-safe/mcpzt.yaml --server filesystem
+(cd examples/filesystem-safe && mcpzt wrap --config mcpzt.yaml --server filesystem)
 ```
 
 If you already have MCP servers configured in Claude Desktop, Cursor or VS Code, you do not need to rewrite those entries by hand. Import the existing client config and let MCPZT generate two local files: an MCPZT policy config and a wrapped client config. With `--discover`, MCPZT starts the real upstream MCP servers, performs the MCP initialization handshake, lists their tools/resources/prompts, infers starter metadata and writes reviewable policies.
@@ -1027,6 +1033,8 @@ FastAPI `/docs`, `/redoc` and `/openapi.json` are disabled automatically when `p
 The production guide has the full checklist: [docs/PRODUCTION.md](docs/PRODUCTION.md).
 
 ## Examples In This Repository
+
+See the [0.6.0 example catalog and compatibility matrix](examples/README.md) for prerequisites, executable checks, receipt support and the Stripe sandbox template. The filesystem example tests a pinned official server; the HTTP service names are illustrative contracts that must match your actual upstream.
 
 The examples are meant to be read as starting points, not as perfect production configs. [examples/github-readonly](examples/github-readonly/mcpzt.yaml) allows read-only GitHub operations and requires approval for critical actions. [examples/postgres-readonly](examples/postgres-readonly/mcpzt.yaml) allows SQL reads while blocking destructive statements. [examples/filesystem-safe](examples/filesystem-safe/mcpzt.yaml) restricts filesystem access and requires approval for writes. [examples/protected-http-upstream](examples/protected-http-upstream/mcpzt.yaml) shows how client auth and upstream credentials stay separate. [examples/oidc-gateway](examples/oidc-gateway/mcpzt.yaml) shows a production-shaped OIDC gateway with group-based policies, SQLite approvals and output redaction. [examples/multi-mcp](examples/multi-mcp/mcpzt.yaml) protects GitHub, Postgres, filesystem and CRM MCPs in one config.
 

@@ -43,6 +43,11 @@ jobs:
         run: python -m pip install -c constraints.txt -e ".[dev]"
       - name: Verify real SDK smoke is available
         run: python -c "import mcp"
+      - name: Install pinned official filesystem peer for example compatibility
+        shell: bash
+        run: |
+          npm install --prefix "$RUNNER_TEMP/filesystem-peer" --ignore-scripts --no-audit --no-fund @modelcontextprotocol/server-filesystem@2026.8.31
+          echo "MCPZT_FILESYSTEM_ENTRYPOINT=$RUNNER_TEMP/filesystem-peer/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js" >> "$GITHUB_ENV"
       - name: Lint
         run: ruff check .
       - name: Type check
@@ -98,6 +103,10 @@ jobs:
           with tarfile.open(sdist) as archive:
               metadata, = [item for item in archive.getmembers() if item.name.count('/') == 1 and item.name.endswith('/PKG-INFO')]
               source_meta = email.message_from_bytes(archive.extractfile(metadata).read())
+              names = archive.getnames()
+              for doc in ('docs/README.md', 'docs/EVIDENCE.md', 'docs/EXTERNAL_CHECKS.md', 'docs/EVIDENCE_OPERATIONS.md', 'docs/TESTING_0.6.0.md'):
+                  assert any(name.endswith('/' + doc) for name in names), f'Missing public guide: {doc}'
+              assert not any('/docs/plans/' in name or '/docs/audit/' in name for name in names), 'Internal documents in distribution'
           for metadata in (wheel_meta, source_meta):
               assert metadata['Name'] == project['name']
               assert metadata['Version'] == project['version']
@@ -120,6 +129,8 @@ jobs:
           "$RUNNER_TEMP/mcpzt-wheel-smoke/bin/mcpzt" config lint --config "$RUNNER_TEMP/wheel-smoke.yaml"
           "$RUNNER_TEMP/mcpzt-wheel-smoke/bin/mcpzt" evidence demo --directory "$RUNNER_TEMP/wheel-evidence-demo"
           "$RUNNER_TEMP/mcpzt-wheel-smoke/bin/mcpzt" evidence verify "$RUNNER_TEMP/wheel-evidence-demo/bundle.json" --trust "$RUNNER_TEMP/wheel-evidence-demo/trust.json"
+          "$RUNNER_TEMP/mcpzt-wheel-smoke/bin/mcpzt" evidence check-demo --directory "$RUNNER_TEMP/wheel-check-demo"
+          "$RUNNER_TEMP/mcpzt-wheel-smoke/bin/mcpzt" evidence verify "$RUNNER_TEMP/wheel-check-demo/bundle-v2.json" --trust "$RUNNER_TEMP/wheel-check-demo/trust.json" --observers "$RUNNER_TEMP/wheel-check-demo/observers.json" --request "$RUNNER_TEMP/wheel-check-demo/request-preimage.json"
       - name: Upload verified distributions and checksums
         uses: actions/upload-artifact@v4
         with:

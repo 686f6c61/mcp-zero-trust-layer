@@ -9,12 +9,18 @@ include docs/MULTI_MCP_USE_CASES.md
 include docs/PRODUCTION.md
 include docs/PYPI_RELEASE.md
 recursive-include examples *.yaml
+recursive-include examples *.md
+recursive-include examples/evidence *.json *.md
 recursive-include deploy *.yaml
 recursive-include deploy *.tpl
 include docs/CLIENT_COMPATIBILITY.md
 include docs/VALIDATOR_LIMITS.md
 include docs/SUPPORTED_PROFILE.md
+include docs/README.md
+include docs/EVIDENCE_OPERATIONS.md
 include docs/EVIDENCE.md
+include docs/EXTERNAL_CHECKS.md
+include docs/TESTING_0.6.0.md
 prune docs/plans
 prune docs/audit
 exclude docs/RELEASE_PLAN*.md

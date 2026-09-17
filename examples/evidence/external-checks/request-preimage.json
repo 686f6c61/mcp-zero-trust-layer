@@ -1,0 +1,12 @@
+{
+  "method": "tools/call",
+  "params": {
+    "name": "refund",
+    "arguments": {
+      "amount_minor": 5000,
+      "currency": "eur",
+      "account": "acct_demo",
+      "charge": "ch_demo"
+    }
+  }
+}

@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from mcp_zero_trust_layer.approvals import ApprovalStore
+from mcp_zero_trust_layer.config import load_config
 from mcp_zero_trust_layer.config.models import MCPZTConfig
 from mcp_zero_trust_layer.transports.http.app import create_app_from_config
 
@@ -189,173 +190,17 @@ def _multi_mcp_config(
     workspace: Path,
     upstreams: dict[str, UpstreamHandle],
 ) -> MCPZTConfig:
-    return MCPZTConfig.model_validate(
-        {
-            "project": {"name": "multi-mcp-e2e", "environment": "development"},
-            "runtime": {"default_decision": "deny"},
-            "auth": {"mode": "none"},
-            "servers": [
-                {"name": "github", "transport": "http", "upstream": upstreams["github"].url},
-                {"name": "postgres", "transport": "http", "upstream": upstreams["postgres"].url},
-                {
-                    "name": "filesystem",
-                    "transport": "http",
-                    "upstream": upstreams["filesystem"].url,
-                },
-                {"name": "crm", "transport": "http", "upstream": upstreams["crm"].url},
-            ],
-            "capability_mappings": {
-                "github": {
-                    "tools": {
-                        "github.search_issues": {
-                            "action": "code.read",
-                            "risk": "low",
-                            "access": "read",
-                        },
-                        "github.merge_pull_request": {
-                            "action": "code.merge",
-                            "risk": "critical",
-                            "access": "write",
-                        },
-                        "github.delete_repository": {
-                            "action": "code.delete",
-                            "risk": "critical",
-                            "access": "delete",
-                        },
-                    }
-                },
-                "postgres": {
-                    "tools": {
-                        "postgres.query": {
-                            "action": "db.read",
-                            "risk": "medium",
-                            "access": "read",
-                        },
-                        "postgres.drop_table": {
-                            "action": "db.admin",
-                            "risk": "critical",
-                            "access": "write",
-                        },
-                    }
-                },
-                "filesystem": {
-                    "tools": {
-                        "filesystem.read_file": {
-                            "action": "filesystem.read",
-                            "risk": "low",
-                            "access": "read",
-                        }
-                    },
-                    "resources": {
-                        "file:///workspace/README.md": {
-                            "action": "filesystem.read",
-                            "risk": "low",
-                            "access": "read",
-                        },
-                        "file:///etc/passwd": {
-                            "action": "filesystem.read",
-                            "risk": "critical",
-                            "access": "read",
-                        },
-                    },
-                },
-                "crm": {
-                    "tools": {
-                        "crm.get_customer": {
-                            "action": "crm.read",
-                            "risk": "medium",
-                            "access": "read",
-                            "data_classification": "confidential",
-                        }
-                    }
-                },
-            },
-            "policies": [
-                {
-                    "id": "allow-github-read",
-                    "effect": "allow",
-                    "match": {"server": "github", "action": "code.read"},
-                    "input": {
-                        "required_fields": ["q"],
-                        "allowed_fields": ["q"],
-                        "max_field_bytes": {"q": 512},
-                    },
-                },
-                {
-                    "id": "deny-github-delete",
-                    "effect": "deny",
-                    "match": {"server": "github", "capability": "github.delete_repository"},
-                },
-                {
-                    "id": "github-critical-needs-approval",
-                    "effect": "require_approval",
-                    "match": {"server": "github", "risk": "critical"},
-                },
-                {
-                    "id": "show-postgres-query",
-                    "effect": "allow",
-                    "match": {
-                        "server": "postgres",
-                        "method": "tools/list",
-                        "capability": "postgres.query",
-                    },
-                },
-                {
-                    "id": "allow-readonly-sql",
-                    "effect": "allow",
-                    "match": {"server": "postgres", "method": "tools/call", "action": "db.read"},
-                    "validators": [{"name": "sql_read_only"}],
-                },
-                {
-                    "id": "allow-safe-filesystem-resource",
-                    "effect": "allow",
-                    "match": {
-                        "server": "filesystem",
-                        "capability_type": "resource",
-                        "capability": "file:///workspace/README.md",
-                    },
-                },
-                {
-                    "id": "allow-safe-filesystem-read",
-                    "effect": "allow",
-                    "match": {
-                        "server": "filesystem",
-                        "capability_type": "tool",
-                        "capability": "filesystem.read_file",
-                    },
-                    "validators": [
-                        {
-                            "name": "filesystem_path",
-                            "options": {
-                                "path_arg": "path",
-                                "allowed_roots": [str(workspace)],
-                                "read_only": True,
-                            },
-                        }
-                    ],
-                },
-                {
-                    "id": "allow-crm-read",
-                    "effect": "allow",
-                    "match": {"server": "crm", "action": "crm.read"},
-                    "input": {
-                        "required_fields": ["customer_id"],
-                        "allowed_fields": ["customer_id"],
-                        "max_field_bytes": {"customer_id": 128},
-                    },
-                },
-                {
-                    "id": "redact-crm-pii",
-                    "effect": "redact",
-                    "match": {"server": "crm", "capability": "crm.get_customer"},
-                    "when": {"output.email": {"exists": True}},
-                    "output": {"redact_fields": ["email", "api_key"]},
-                },
-            ],
-            "audit": {"destination": "file", "path": str(tmp_path / "audit.jsonl")},
-            "approvals": {"path": str(tmp_path / "approvals.json")},
-        }
-    )
+    # Exercise the published YAML, not a hand-maintained policy copy.
+    config = load_config(Path(__file__).resolve().parents[2] / "examples/multi-mcp/mcpzt.yaml")
+    for server in config.servers:
+        server.upstream = upstreams[server.name].url
+    config.audit.path = str(tmp_path / "audit.jsonl")
+    config.approvals.path = str(tmp_path / "approvals.json")
+    for policy in config.policies:
+        for validator in policy.validators:
+            if validator.name == "filesystem_path":
+                validator.options["allowed_roots"] = [str(workspace)]
+    return config
 
 
 def _start_upstream(name: str) -> UpstreamHandle:

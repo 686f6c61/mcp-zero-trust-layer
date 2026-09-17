@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from mcp_zero_trust_layer import __version__
 from mcp_zero_trust_layer.evidence.canonical import MAX_BYTES, canonical, digest, loads
 from mcp_zero_trust_layer.evidence.crypto import sign
 from mcp_zero_trust_layer.evidence.models import Attempt, Permit, Receipt, TrustStore
@@ -42,7 +43,7 @@ class RefundDestination:
         if method == "initialize":
             return success_response(message["id"], {
                 "protocolVersion": "2025-11-25", "capabilities": {"tools": {}},
-                "serverInfo": {"name": "mcpzt-receipt-demo", "version": "0.5.0"},
+                "serverInfo": {"name": "mcpzt-receipt-demo", "version": __version__},
             })
         if method == "tools/list":
             return success_response(message["id"], {"tools": [{

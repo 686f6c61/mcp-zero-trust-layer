@@ -59,6 +59,13 @@ capability_mappings:
         data_classification: confidential
 
 policies:
+  # Protocol setup is allowed; business tools still require their own policies.
+  - id: allow-mcp-lifecycle
+    effect: allow
+    match:
+      capability_type: method
+      capabilities: [initialize, ping]
+
   - id: allow-github-read-for-eng
     effect: allow
     match:
@@ -84,6 +91,10 @@ policies:
     match:
       server: crm
       data_classification: confidential
+      group: support
+    when:
+      output:
+        exists: true
     output:
       redact_fields:
         - email

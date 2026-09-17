@@ -16,24 +16,31 @@ servers:
     command:
       - npx
       - -y
-      - "@modelcontextprotocol/server-filesystem"
+      - "@modelcontextprotocol/server-filesystem@2026.8.31"
       - ./workspace
 
 capability_mappings:
   filesystem:
     tools:
-      filesystem.read_file:
+      read_text_file:
         action: filesystem.read
         risk: low
         access: read
         resource_type: file
-      filesystem.write_file:
+      write_file:
         action: filesystem.write
         risk: high
         access: write
         resource_type: file
 
 policies:
+  # Protocol setup is allowed; business tools still require their own policies.
+  - id: allow-mcp-lifecycle
+    effect: allow
+    match:
+      capability_type: method
+      capabilities: [initialize, ping]
+
   - id: allow-safe-filesystem-read
     effect: allow
     match:
@@ -52,8 +59,16 @@ policies:
     match:
       server: filesystem
       action: filesystem.write
+    validators:
+      - name: filesystem_path
+        options:
+          path_arg: path
+          allowed_roots:
+            - ./workspace
+
+# Start the wrapper from this directory so the upstream and validators resolve
+# ./workspace to the same root. Use absolute paths for deployment configurations.
 
 audit:
   destination: file
   path: ./mcpzt-audit.jsonl
-

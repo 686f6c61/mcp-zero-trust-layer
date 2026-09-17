@@ -158,7 +158,7 @@ def test_demo_refuses_false_success(tmp_path, monkeypatch, failure):
         original = MCPPipeline.handle
         def deny(self, *a, **k):
             message = a[1]
-            if message['params']['arguments']['amount_minor'] == 5000:
+            if message.get('params', {}).get('arguments', {}).get('amount_minor') == 5000:
                 return {'error': {}}
             return original(self, *a, **k)
         monkeypatch.setattr(MCPPipeline, 'handle', deny)
@@ -187,6 +187,34 @@ def test_real_mcp_sdk_preserves_permit_and_receipt_metadata(env):
             bundle['receipt'] = result.meta[META]
             assert verify_bundle(bundle, service.trust)['effect'] == 'committed'
     asyncio.run(exercise())
+
+
+def test_generated_ledger_config_works_through_gateway_with_real_sdk(tmp_path):
+    import asyncio
+
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    from mcp_zero_trust_layer.evidence.demo import create_demo
+    from mcp_zero_trust_layer.evidence.store import database
+
+    root = tmp_path / 'gateway-demo'
+    create_demo(root)
+
+    async def exercise():
+        params = StdioServerParameters(command=sys.executable, args=[
+            '-c', 'from mcp_zero_trust_layer.cli.main import app; app()',
+            'wrap', '--config', str(root / 'mcpzt.yaml'), '--server', 'refund'])
+        async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+            await session.initialize()
+            tools = await session.list_tools()
+            assert [tool.name for tool in tools.tools] == ['refund']
+            result = await session.call_tool('refund', {'amount_minor': 5000})
+            assert result.isError is False and (not result.meta or META not in result.meta)
+            assert result.structuredContent['amount_minor'] == 5000
+    asyncio.run(exercise())
+    with database(root / 'destination.sqlite3') as db:
+        assert db.execute('SELECT count(*) FROM refunds').fetchone()[0] == 1
 
 
 @pytest.mark.parametrize('point', ['before_commit', 'after_commit'])

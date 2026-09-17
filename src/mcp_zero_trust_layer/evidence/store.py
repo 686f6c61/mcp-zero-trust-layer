@@ -48,6 +48,9 @@ class EvidenceStore:
                     seq INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT UNIQUE NOT NULL,
                     operation_id TEXT NOT NULL, payload TEXT NOT NULL,
                     delivered INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS evidence_v2_observations (
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    operation_id TEXT NOT NULL, digest TEXT UNIQUE NOT NULL, document TEXT NOT NULL);
             """)
             db.execute("INSERT OR IGNORE INTO evidence_v1_settings VALUES('salt',?)",
                        (secrets.token_hex(32),))
@@ -127,6 +130,45 @@ class EvidenceStore:
             return [json.loads(row[0]) for row in db.execute(
                 "SELECT payload FROM evidence_v1_events WHERE operation_id=? ORDER BY seq",
                 (operation,))]
+
+    def checked_bundle(self, operation: str, tenant: str) -> dict[str, Any]:
+        bundle = self.get(operation, tenant)
+        with database(self.path) as db:
+            observations = [json.loads(row[0]) for row in db.execute(
+                "SELECT document FROM evidence_v2_observations WHERE operation_id=? ORDER BY seq",
+                (operation,))]
+        return {"version": 2, "evidence": bundle, "observations": observations}
+
+    def append_observation(self, operation: str, tenant: str, document: dict[str, Any]) -> None:
+        from mcp_zero_trust_layer.evidence.canonical import digest
+        from mcp_zero_trust_layer.evidence.check_models import SignedObservation
+        from mcp_zero_trust_layer.evidence.checks import observation_digest
+
+        parsed = SignedObservation.model_validate(document)
+        with database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            # Read within the write transaction: concurrent receipt/check changes cannot fork history.
+            row = db.execute("SELECT bundle FROM evidence_v1_operations WHERE operation_id=? "
+                             "AND tenant=?", (operation, tenant)).fetchone()
+            if row is None:
+                raise ValueError("OPERATION_NOT_FOUND")
+            if digest("checked_bundle", json.loads(row[0])) != parsed.payload.evidence_digest:
+                raise ValueError("OBSERVATION_BINDING_MISMATCH")
+            conflict = db.execute("SELECT 1 FROM evidence_v1_events WHERE operation_id=? "
+                                 "AND json_extract(payload,'$.phase')='receipt_conflict'",
+                                 (operation,)).fetchone()
+            if conflict:
+                raise ValueError("RECEIPT_CONFLICT")
+            rows = db.execute("SELECT digest FROM evidence_v2_observations WHERE operation_id=? "
+                              "ORDER BY seq", (operation,)).fetchall()
+            if len(rows) >= 256:
+                raise ValueError("OBSERVATION_LIMIT")
+            if parsed.payload.previous_digest != (rows[-1][0] if rows else None):
+                raise ValueError("OBSERVATION_CONCURRENT_UPDATE")
+            db.execute("INSERT INTO evidence_v2_observations(operation_id,digest,document) "
+                       "VALUES(?,?,?)", (operation, observation_digest(parsed), canonical(document).decode()))
+            self.append(db, operation, {"phase": "external_check_recorded",
+                "observation_digest": observation_digest(parsed), "result": parsed.payload.result})
 
     def flush(self, emit: Callable[[dict[str, Any]], None]) -> None:
         with database(self.path) as db:

@@ -57,6 +57,14 @@ deploy/
 docs/MULTI_MCP_USE_CASES.md
 docs/PRODUCTION.md
 docs/PYPI_RELEASE.md
+docs/README.md
+docs/SUPPORTED_PROFILE.md
+docs/CLIENT_COMPATIBILITY.md
+docs/VALIDATOR_LIMITS.md
+docs/EVIDENCE.md
+docs/EXTERNAL_CHECKS.md
+docs/EVIDENCE_OPERATIONS.md
+docs/TESTING_0.6.0.md
 ```
 
 The source distribution should not include internal construction docs, local audit files, approval stores, secrets, virtual environments, caches or generated build directories. In this repository, `MANIFEST.in` intentionally includes public docs one by one instead of using `recursive-include docs *.md`.
@@ -152,13 +160,7 @@ Check the docs that will ship.
 tar -tzf dist/mcp_zero_trust_layer-*.tar.gz | rg '(^|/)docs/'
 ```
 
-Expected public docs:
-
-```text
-mcp_zero_trust_layer-<version>/docs/MULTI_MCP_USE_CASES.md
-mcp_zero_trust_layer-<version>/docs/PRODUCTION.md
-mcp_zero_trust_layer-<version>/docs/PYPI_RELEASE.md
-```
+The public documentation allowlist is maintained explicitly in `MANIFEST.in`. Compare every `include docs/...` entry with the archive, including the guide index, evidence contract, external checks, operations guide and validation record. Internal plans and audits must remain excluded.
 
 Check the deployment recipes that will ship in the source distribution.
 
@@ -300,3 +302,21 @@ If GitHub Actions fails before upload, fix the workflow or package and retry. If
 - PyPI Trusted Publishers overview: https://docs.pypi.org/trusted-publishers/
 - PyPI Trusted Publishing with GitHub Actions: https://docs.pypi.org/trusted-publishers/using-a-publisher/
 - PyPI Trusted Publisher security model: https://docs.pypi.org/trusted-publishers/security-model/
+
+
+## 0.6.0 evidence and coordinated website release
+
+Run the v1 and v2 demos from the installed wheel, outside the checkout, using new directories. Verify the final v2 bundle with both public trust stores and the original request preimage. The reusable CI workflow performs these installed-artifact checks. Configure the pinned official filesystem peer as described in [the example guide](../examples/filesystem-safe/README.md) if reproducing the full integration run locally; otherwise that test is explicitly skipped. A Stripe sandbox test without its external fixture and credentials remains skipped and must not be described as a live provider certification.
+
+Use `evidence export --version 1` only for a legacy consumer; the default export is v2 while `evidence schema` still defaults to v1. Review [migration and operator behavior](EVIDENCE_OPERATIONS.md) before changing automated consumers.
+
+The product is released from `main`; the website is built separately from `landing`. For a coordinated release:
+
+1. Validate and publish the exact product commit, tag, PyPI distribution and GHCR image; verify their installed behavior.
+2. Ensure the new public documentation and examples are present on `main`. Website documentation/example links use that branch; release notes use the version tag.
+3. In the landing checkout, run its static/browser/container checks and `python3 landing/check_release.py` against the public release destinations.
+4. Deploy the tested landing commit with the configured production origin, then verify the ES/EN pages, examples link, canonical URLs and versioned install commands at the public origin.
+
+The landing's Nginx image is a different artifact from the product's gateway image. Do not publish a Python release from the landing branch or replace the product Dockerfile with the website Dockerfile.
+
+Post-publication jobs compare both PyPI downloads byte-for-byte with the CI-approved wheel/sdist, run the v2 demo and verifier from the published package, and pull the published GHCR image by digest. The container check requires the release commit label, expected version and non-root runtime before executing the v2 demo.

@@ -1,6 +1,6 @@
 # Production Guide
 
-For 0.5.0 deployment limits, session lifecycle, approval migration and audit semantics, read [SUPPORTED_PROFILE.md](SUPPORTED_PROFILE.md). Opt-in destination receipts require the storage, key and recovery setup in [EVIDENCE.md](EVIDENCE.md). Client/provider setup is in [CLIENT_COMPATIBILITY.md](CLIENT_COMPATIBILITY.md); conservative validator behavior is in [VALIDATOR_LIMITS.md](VALIDATOR_LIMITS.md).
+For 0.6.0 deployment limits, session lifecycle, approval migration and audit semantics, read [SUPPORTED_PROFILE.md](SUPPORTED_PROFILE.md). Opt-in destination receipts require the storage, key and recovery setup in [EVIDENCE.md](EVIDENCE.md). Client/provider setup is in [CLIENT_COMPATIBILITY.md](CLIENT_COMPATIBILITY.md); conservative validator behavior is in [VALIDATOR_LIMITS.md](VALIDATOR_LIMITS.md).
 
 This guide describes how to run MCP Zero Trust Layer around real MCP servers. It is public operational documentation, so it focuses on deployment posture, safety checks and day-two operations rather than internal build planning.
 
@@ -448,3 +448,5 @@ Public references:
 - MCP authorization: https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization
 - PyPA packaging guide: https://packaging.python.org/en/latest/guides/writing-pyproject-toml/
 - PyPI Trusted Publishing: https://docs.pypi.org/trusted-publishers/
+
+The [0.6.0 operations guide](EVIDENCE_OPERATIONS.md) covers upgrades, timeout recovery, command exit codes and history limits. External checks and observer-key operations are documented in [EXTERNAL_CHECKS.md](EXTERNAL_CHECKS.md). V2 reports do not replace destination evidence or prove provider settlement.

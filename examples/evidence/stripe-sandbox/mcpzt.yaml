@@ -1,0 +1,62 @@
+# Deployment template, not a runnable provider demo. Replace identifiers and
+# provision independent signing/trust files before starting the gateway.
+project:
+  name: stripe-sandbox-receipts
+  environment: development
+runtime:
+  mode: gateway
+  default_decision: deny
+  dry_run: false
+auth:
+  mode: api_key
+  header: x-api-key
+  token_env: MCPZT_API_KEY
+servers:
+  - name: refund
+    transport: http
+    upstream: https://refund-mcp.internal/mcp
+    upstream_headers:
+      Authorization: Bearer ${REFUND_MCP_TOKEN}
+    evidence:
+      mode: required
+      issuer: sandbox-gateway
+      destination: refund-service
+      tenant: sandbox-tenant
+      scope: stripe.refund.status.v1
+      key_id: gateway-1
+      private_key_file: gateway.key
+      trust_store: trust.json
+      store: ./state/evidence.sqlite3
+policies:
+  - id: allow-lifecycle
+    effect: allow
+    match:
+      capability_type: method
+      capabilities: [initialize, ping]
+  - id: show-refund
+    effect: allow
+    match:
+      server: refund
+      method: tools/list
+      capability: refund
+  - id: allow-bounded-sandbox-refund
+    effect: allow
+    match:
+      server: refund
+      method: tools/call
+      capability: refund
+    when:
+      args.amount_minor:
+        in: [5000]
+      args.currency: eur
+      args.account: acct_example
+    input:
+      required_fields: [amount_minor, currency, charge, account]
+      allowed_fields: [amount_minor, currency, charge, account]
+audit:
+  destination: file
+  path: ./state/audit.jsonl
+  strict: true
+approvals:
+  backend: sqlite
+  path: ./state/evidence.sqlite3

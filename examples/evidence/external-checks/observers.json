@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "keys": [
+    {
+      "kid": "observer-demo",
+      "issuer": "observer-demo",
+      "tenant": "demo",
+      "destination": "refund-demo",
+      "source": "stripe",
+      "scope": "stripe.refund.status.v1",
+      "account": "acct_demo",
+      "public_key": "fQvlcJQwz86k3clNM23kRjG7C5GvnY8I-rOAqvqOIQY",
+      "status": "active",
+      "administration": "shared"
+    }
+  ]
+}

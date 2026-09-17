@@ -4,6 +4,34 @@ All notable changes to MCP Zero Trust Layer will be documented here.
 
 The project follows SemVer during the `0.x` line with the caveat that minor versions may still change configuration shape before `1.0`.
 
+## 0.6.0 - 2026-09-17
+
+### Fixed
+
+- Repository examples now explicitly allow MCP initialization/ping without authorizing similarly named tools. The filesystem example uses actual tool names from a pinned official peer and constrains writes before approval; its documented launch directory matches validator roots.
+- OIDC CRM redaction no longer grants inbound access to users outside the support group. CRM redaction applies even when a sensitive API key is returned without an email field.
+- Published multi-MCP YAML is exercised directly by integration tests. Generated HTTP demos perform the MCP handshake and assert outcomes; generated ledger configs are tested end to end through the stdio gateway with the real MCP SDK.
+
+### Added
+
+- Read-only external corroboration with a bounded Stripe test-mode refund-status adapter. Configured account, tenant, destination, tool, receipt scope, request preimage and correlation metadata are checked before a result can be corroborated. No business write, redirect, automatic retry or receipt-selected endpoint.
+- V2 export envelopes retain original v1 signed evidence and append separately signed observer reports. Explicit unknown/pending/contradicted/corroborated results, timestamps and trust assumptions; historical changes never rewrite the destination receipt. Transactional append prevents concurrent history forks.
+- Operator `evidence check` and `check-demo`, offline observer verification and v2 schemas. The adversarial demo includes timeout recovery, a signed lie, subsequent failure, mismatched amounts, pending and missing source records.
+- Regression cases, real local HTTP tests and an opt-in read-only Stripe sandbox test. A skipped sandbox test is not a live-provider certification.
+
+### Changed
+
+- Export defaults to v2; use `--version 1` for older verifiers, deliberately omitting external observations. The v1 wire format, signatures and verifier support are retained. Show includes external history when the observer trust file is supplied.
+- Verifier output explicitly identifies destination-attested effects and absent original gateway observations. Offline checks authenticate observer statements, never claim provider signatures, current external state, administrative independence or complete history.
+
+### Release verification
+
+- CI validates public documentation packaging and excludes internal plans/audits. Post-publication checks compare PyPI artifact bytes with the approved build and run v2 evidence verification from PyPI and the exact published GHCR image.
+
+### Limits
+
+The adapter corroborates provider-reported refund status in test mode, not settlement, causation or global execution uniqueness. Provider metadata can be changed by authorized actors. Observer timestamps are not independently trusted; suffix truncation needs external checkpoints to detect. See `docs/EXTERNAL_CHECKS.md`.
+
 ## 0.5.0 - 2026-09-17
 
 ### Added

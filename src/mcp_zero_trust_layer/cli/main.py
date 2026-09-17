@@ -150,6 +150,10 @@ class DemoMCPHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         return
 
+    def do_GET(self) -> None:  # noqa: N802
+        self.send_response(200 if self.path == "/healthz" else 404)
+        self.end_headers()
+
     def do_POST(self) -> None:  # noqa: N802
         size = int(self.headers.get("content-length", "0"))
         message = json.loads(self.rfile.read(size))
@@ -168,6 +172,10 @@ class DemoMCPHandler(BaseHTTPRequestHandler):
     def _response(self, message: dict[str, Any]) -> dict[str, Any]:
         request_id = message.get("id")
         method = message.get("method")
+        if method == "initialize":
+            return {"jsonrpc": "2.0", "id": request_id, "result": {
+                "protocolVersion": "2025-11-25", "capabilities": {"tools": {}},
+                "serverInfo": {"name": "mcpzt-http-demo", "version": "1"}}}
         if method == "tools/list":
             return {
                 "jsonrpc": "2.0",
@@ -257,6 +265,13 @@ capability_mappings:
         data_classification: confidential
 
 policies:
+  # Protocol setup is allowed; business tools still require their own policies.
+  - id: allow-mcp-lifecycle
+    effect: allow
+    match:
+      capability_type: method
+      capabilities: [initialize, ping]
+
   - id: allow-demo-echo
     effect: allow
     match:
@@ -289,7 +304,7 @@ policies:
       server: demo
       capability: demo.get_customer
     when:
-      output.email:
+      output:
         exists: true
     output:
       redact_fields: [email, api_key]
@@ -316,10 +331,11 @@ from typing import Any
 BASE_URL = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "http://127.0.0.1:__GATEWAY_PORT__"
 
 
-def rpc(request_id: int, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    payload = json.dumps(
-        {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}}
-    ).encode("utf-8")
+def rpc(request_id: int | None, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    message = {"jsonrpc": "2.0", "method": method, "params": params or {}}
+    if request_id is not None:
+        message["id"] = request_id
+    payload = json.dumps(message).encode("utf-8")
     request = urllib.request.Request(
         f"{BASE_URL}/mcp/demo",
         data=payload,
@@ -327,12 +343,19 @@ def rpc(request_id: int, method: str, params: dict[str, Any] | None = None) -> d
         headers={"content-type": "application/json", "accept": "application/json"},
     )
     with urllib.request.urlopen(request, timeout=10) as response:
+        if response.status == 202:
+            return {}
         return json.loads(response.read().decode("utf-8"))
 
 
 def call_tool(request_id: int, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     return rpc(request_id, "tools/call", {"name": name, "arguments": arguments})
 
+
+initialized = rpc(0, "initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
+    "clientInfo": {"name": "mcpzt-demo-client", "version": "1"}})
+assert initialized["result"]["serverInfo"]["name"] == "mcpzt-http-demo"
+rpc(None, "notifications/initialized")
 
 cases = {
     "visible tools": rpc(1, "tools/list"),
@@ -344,6 +367,14 @@ cases = {
 for title, payload in cases.items():
     print(f"\\n## {title}")
     print(json.dumps(payload, indent=2, sort_keys=True))
+
+assert {t["name"] for t in cases["visible tools"]["result"]["tools"]} == {
+    "demo.safe_echo", "demo.get_customer"}
+assert cases["allowed echo"]["result"]["echo"] == "hello zero trust"
+assert cases["denied delete"]["error"]["code"] == -32001
+assert cases["redacted customer"]["result"]["email"] == "[REDACTED]"
+assert cases["redacted customer"]["result"]["api_key"] == "[REDACTED]"
+print("All demo assertions passed")
 '''
 
 
@@ -353,7 +384,7 @@ set -eu
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PYTHON=${PYTHON:-python3}
 MCPZT=${MCPZT:-mcpzt}
-UPSTREAM_PORT=${UPSTREAM_PORT:-__UPSTREAM_PORT__}
+UPSTREAM_PORT=__UPSTREAM_PORT__
 GATEWAY_PORT=${GATEWAY_PORT:-__GATEWAY_PORT__}
 cd "$DIR"
 
@@ -379,6 +410,7 @@ wait_for() {
 
 "$PYTHON" fake_mcp.py "$UPSTREAM_PORT" &
 UPSTREAM_PID=$!
+wait_for "http://127.0.0.1:${UPSTREAM_PORT}/healthz"
 
 "$MCPZT" run --config mcpzt.yaml --host 127.0.0.1 --port "$GATEWAY_PORT" &
 GATEWAY_PID=$!
@@ -398,12 +430,15 @@ Run the whole demo with:
 ./run_demo.sh
 ```
 
-The script starts a fake HTTP MCP server, starts MCPZT in front of it, then sends four requests:
+The script waits for a fake HTTP MCP server and MCPZT, initializes MCP, then checks four cases:
 
 - `tools/list`, where the dangerous tool is hidden by policy.
 - `demo.safe_echo`, which is allowed.
 - `demo.delete_everything`, which is denied before the upstream sees it.
 - `demo.get_customer`, which is allowed but returns redacted `email` and `api_key` fields.
+
+It exits nonzero if a case fails. This demonstrates policy enforcement with evidence
+off; it does not produce destination receipts or externally corroborated effects.
 
 The demo uses `auth.mode: none` so it can run without credentials. Real deployments should configure authentication and run `mcpzt doctor --strict --config mcpzt.yaml`.
 """
