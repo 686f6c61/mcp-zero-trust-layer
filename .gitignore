@@ -87,6 +87,9 @@ temp/
 
 # Internal construction and planning material.
 # These files can exist locally, but they are not public project docs.
+/docs/plans/
+/docs/audit/
+/docs/RELEASE_PLAN*.md
 /docs/MCP_Zero_Trust_Layer_PDR.md
 /docs/BUILD_PLAN.md
 /docs/PHASES.md

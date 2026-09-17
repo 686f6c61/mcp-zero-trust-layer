@@ -10,7 +10,7 @@ from mcp_zero_trust_layer.audit import redact_sensitive
 from mcp_zero_trust_layer.config.models import ServerConfig
 from mcp_zero_trust_layer.config.secrets import SecretError, resolve_secret_value
 from mcp_zero_trust_layer.protocol import JSONRPCError
-from mcp_zero_trust_layer.protocol.jsonrpc import require_jsonrpc_message
+from mcp_zero_trust_layer.protocol.jsonrpc import require_jsonrpc_message, strict_json_loads
 
 FORWARDED_HEADERS = {
     "accept",
@@ -80,7 +80,7 @@ class HTTPUpstreamClient:
         if "id" not in message:
             raise JSONRPCError(-32603, "Upstream returned a response to a notification")
         try:
-            payload = json.loads(content)
+            payload = strict_json_loads(content)
         except ValueError as exc:
             raise JSONRPCError(-32603, "Invalid upstream JSON response") from exc
         try:

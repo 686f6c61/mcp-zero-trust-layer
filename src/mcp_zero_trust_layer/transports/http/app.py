@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -15,6 +14,7 @@ from mcp_zero_trust_layer.core.pipeline import MCPPipeline
 from mcp_zero_trust_layer.identity import AuthError, AuthResolver
 from mcp_zero_trust_layer.observability import MetricsCollector
 from mcp_zero_trust_layer.protocol import error_response
+from mcp_zero_trust_layer.protocol.jsonrpc import strict_json_loads
 from mcp_zero_trust_layer.transports.http.sessions import SessionRegistry
 from mcp_zero_trust_layer.upstream.http import HTTPUpstreamClient
 
@@ -302,4 +302,4 @@ async def _read_bounded_json(request: Request, max_bytes: int) -> Any:
         if total > max_bytes:
             raise PayloadTooLargeError
         chunks.append(chunk)
-    return json.loads(b"".join(chunks))
+    return strict_json_loads(b"".join(chunks))

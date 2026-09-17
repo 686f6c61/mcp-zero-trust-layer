@@ -1,4 +1,6 @@
-# Supported runtime profile (0.4.0)
+# Supported runtime profile (0.5.0)
+
+0.5.0 adds opt-in [destination receipts](EVIDENCE.md). Their scope is cooperating `tools/call` destinations over the existing HTTP JSON/POSIX stdio transports. The protocol does not add SSE or universal effect confirmation. Enabled servers require strict enforce mode and a shared private SQLite approvals/evidence database; see the evidence guide before migration. Default off-mode retains the existing approval binding. Duplicate-key JSON and explicit NaN/infinity are rejected on protocol ingress.
 
 MCPZT is a model-independent policy gateway, not a complete implementation of every MCP host or transport capability. Tests cover local SDK interoperability and client configuration formats; cloud providers have not been certified end to end.
 

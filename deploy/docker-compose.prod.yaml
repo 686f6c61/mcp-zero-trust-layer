@@ -1,6 +1,6 @@
 services:
   mcpzt:
-    image: ghcr.io/686f6c61/mcp-zero-trust-layer:0.3.0
+    image: ghcr.io/686f6c61/mcp-zero-trust-layer:0.5.0
     command:
       - run
       - --config

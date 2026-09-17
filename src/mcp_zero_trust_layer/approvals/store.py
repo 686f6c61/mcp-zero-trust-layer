@@ -114,21 +114,29 @@ class ApprovalStore:
         with self._sqlite_connection() as connection:
             _ensure_sqlite_schema(connection)
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT payload FROM approvals WHERE id = ?",
-                (approval_id,),
-            ).fetchone()
-            approval = _approval_from_sqlite_payload(row["payload"]) if row else None
-            if approval is None or not self._is_valid(approval, context, policy_id):
-                return False
-            consumed = _with_status(
-                approval, "consumed", decided_by=approval.decided_by, decision_comment=None
-            )
-            connection.execute(
-                "UPDATE approvals SET status = ?, payload = ? WHERE id = ?",
-                (consumed.status, _sqlite_payload(consumed), approval_id),
-            )
-            return True
+            return self.consume_in_transaction(connection, approval_id, context, policy_id)
+
+    def consume_in_transaction(
+        self, connection: sqlite3.Connection, approval_id: str,
+        context: RequestContext, policy_id: str,
+    ) -> bool:
+        """Caller owns the transaction in the SAME SQLite approvals/evidence database."""
+        _ensure_sqlite_schema(connection)
+        row = connection.execute(
+            "SELECT payload FROM approvals WHERE id = ?",
+            (approval_id,),
+        ).fetchone()
+        approval = _approval_from_sqlite_payload(row["payload"]) if row else None
+        if approval is None or not self._is_valid(approval, context, policy_id):
+            return False
+        consumed = _with_status(
+            approval, "consumed", decided_by=approval.decided_by, decision_comment=None
+        )
+        connection.execute(
+            "UPDATE approvals SET status = ?, payload = ? WHERE id = ?",
+            (consumed.status, _sqlite_payload(consumed), approval_id),
+        )
+        return True
 
     @staticmethod
     def _is_valid(

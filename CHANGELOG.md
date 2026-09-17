@@ -4,6 +4,26 @@ All notable changes to MCP Zero Trust Layer will be documented here.
 
 The project follows SemVer during the `0.x` line with the caveat that minor versions may still change configuration shape before `1.0`.
 
+## 0.5.0 - 2026-09-17
+
+### Added
+
+- Experimental opt-in destination receipts: JCS/SHA-256 commitments, separate Ed25519 gateway and destination signatures, strict schemas, and pinned role/tenant/audience/effect-scope trust.
+- Offline evidence verification with explicit claim and content-check results; local operator show/export/reconcile/schema commands. Bundles never auto-trust embedded keys or fetch remote verification URLs.
+- Durable SQLite operations, atomic approval consumption/reservation, persistent idempotency scope across signing-key rotation, and an at-least-once audit outbox. Timeouts remain unknown; reconciliation never repeats a business operation. Pending receipts can advance monotonically; conflicting terminal evidence blocks export.
+- A real stdio refund-ledger demo with separate keys and transactional receipt material. Its effect is a local SQLite row, not a payment-provider operation.
+- Adversarial and transport tests covering actual process death, concurrent repetition, content substitution, output filtering, offline schema verification and MCP SDK metadata interoperability.
+
+### Changed
+
+- Reject duplicate JSON keys and explicit nonfinite constants at protocol ingress. Evidence additionally requires the documented bounded JCS numeric/Unicode profile.
+- Evidence is off by default. Enabled servers require enforce mode, strict audit, a cooperating destination and the same private SQLite database for approvals and evidence. Earlier approvals must be recreated when enabling the profile.
+- Internal plans and audit working material are excluded from Git tracking, packages and Docker build context; previously published history is unchanged.
+
+### Limits
+
+Destination signatures attest statements under configured trust. They do not prove honesty, global exactly-once execution, independent timestamps, complete logs or effects at unintegrated external systems. The full contract and migration instructions are in `docs/EVIDENCE.md`.
+
 ## 0.4.0 - 2026-09-16
 
 ### Fixed

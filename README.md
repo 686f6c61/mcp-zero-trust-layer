@@ -55,9 +55,15 @@ MCPZT is built for that missing layer. It treats every MCP interaction as someth
 
 The result is a boring but useful control point. Boring is good here. You want a deterministic layer that can explain why it allowed a call, why it denied a call, why it created an approval, and whether the upstream server was actually contacted.
 
-## 0.4.0 compatibility and upgrade boundary
+## 0.5.0 destination receipts
 
-Read [the supported runtime profile](docs/SUPPORTED_PROFILE.md) before upgrading. This release fixes approval/audit concurrency and enforcement gaps, isolates authenticated HTTP sessions, and invalidates old approvals without the new request binding. HTTP upstreams must return JSON. Stdio is a bounded POSIX serial profile; server-initiated messages are rejected explicitly. The gateway does not provide independent proof of downstream execution.
+Opt-in destination-signed receipts now bind an authorization, tool request and result. The gateway verifies configured signing authorities before filtering output, persists attempts with SQLite approval consumption, and supports read-only reconciliation after a lost response. `mcpzt evidence demo --directory /tmp/mcpzt-receipts-demo` runs a complete local refund-ledger example; `mcpzt evidence verify` checks exported commitments offline.
+
+This confirms a statement by a trusted destination within its configured scope, not arbitrary external execution. Upstreams must implement the receipt contract. The reference demo changes a local SQLite ledger and moves no money. See [the evidence profile](docs/EVIDENCE.md) for configuration, signed bytes, idempotency, migration and limits.
+
+## Compatibility and upgrade boundary
+
+Read [the supported runtime profile](docs/SUPPORTED_PROFILE.md) before upgrading. The 0.4.0 hardening fixed approval/audit concurrency and enforcement gaps, isolated authenticated HTTP sessions, and invalidated old approvals without its request binding. HTTP upstreams must return JSON. Stdio is a bounded POSIX serial profile; server-initiated messages are rejected explicitly. Gateway observations alone do not provide independent proof of downstream execution. In 0.5.0 evidence remains off by default; enabling it requires a shared private approvals/evidence SQLite database and fresh approvals. Ambiguous duplicate-key JSON and explicit nonfinite constants are rejected at ingress.
 
 [Client configuration and provider compatibility](docs/CLIENT_COMPATIBILITY.md) covers Grok Build, xAI remote MCP, Codex, Gemini, VS Code, Cursor and Claude, distinguishing generated configuration from live-provider testing. [Validator limits](docs/VALIDATOR_LIMITS.md) describe the conservative SQL/email/input contracts.
 

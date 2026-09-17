@@ -128,3 +128,6 @@ jobs:
             --client-output /tmp/claude-smoke-wrapped.json \
             --wrapper-command /tmp/mcpzt-pypi-smoke/bin/mcpzt
           /tmp/mcpzt-pypi-smoke/bin/mcpzt config validate --config /tmp/mcpzt-imported.yaml
+          /tmp/mcpzt-pypi-smoke/bin/mcpzt evidence demo --directory /tmp/mcpzt-pypi-evidence
+          /tmp/mcpzt-pypi-smoke/bin/mcpzt evidence verify /tmp/mcpzt-pypi-evidence/bundle.json \
+            --trust /tmp/mcpzt-pypi-evidence/trust.json

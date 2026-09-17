@@ -11,6 +11,7 @@ from mcp_zero_trust_layer.config.models import MCPZTConfig, ServerConfig
 from mcp_zero_trust_layer.core.pipeline import MCPPipeline
 from mcp_zero_trust_layer.identity import Identity
 from mcp_zero_trust_layer.protocol import error_response
+from mcp_zero_trust_layer.protocol.jsonrpc import strict_json_loads
 from mcp_zero_trust_layer.upstream.stdio import StdioProcessUpstream
 
 
@@ -55,7 +56,7 @@ def run_stdio_wrapper(
             if not line:
                 continue
             try:
-                message = json.loads(line)
+                message = strict_json_loads(line)
             except json.JSONDecodeError:
                 _write_protocol(stdout, error_response(None, -32700, "Parse error"))
                 continue

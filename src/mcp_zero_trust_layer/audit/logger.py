@@ -90,6 +90,8 @@ class AuditLogger:
             "upstream_called": upstream_called,
             "upstream_status": upstream_status,
         }
+        if "operation_id" in context.metadata:
+            event["operation_id"] = context.metadata["operation_id"]
         self._write(event)
         return event
 
@@ -103,6 +105,10 @@ class AuditLogger:
         }
         self._write(event)
         return event
+
+    def log_evidence(self, event: dict[str, Any]) -> None:
+        """Project durable evidence events; consumers deduplicate their stable event_id."""
+        self._write(event)
 
     def _write(self, event: dict[str, Any]) -> None:
         if self.config.destination == "stdout":

@@ -14,3 +14,7 @@ recursive-include deploy *.tpl
 include docs/CLIENT_COMPATIBILITY.md
 include docs/VALIDATOR_LIMITS.md
 include docs/SUPPORTED_PROFILE.md
+include docs/EVIDENCE.md
+prune docs/plans
+prune docs/audit
+exclude docs/RELEASE_PLAN*.md

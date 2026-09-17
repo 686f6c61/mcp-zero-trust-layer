@@ -17,7 +17,7 @@ except ImportError:  # pragma: no cover - platform fallback
 from mcp_zero_trust_layer.config.models import ServerConfig
 from mcp_zero_trust_layer.config.secrets import SecretError, resolve_secret_value
 from mcp_zero_trust_layer.protocol import JSONRPCError
-from mcp_zero_trust_layer.protocol.jsonrpc import require_jsonrpc_message
+from mcp_zero_trust_layer.protocol.jsonrpc import require_jsonrpc_message, strict_json_loads
 
 
 class StdioProcessUpstream:
@@ -64,7 +64,7 @@ class StdioProcessUpstream:
                 if not response_line:
                     raise JSONRPCError(-32030, "stdio upstream closed stdout")
                 try:
-                    response = json.loads(response_line)
+                    response = strict_json_loads(response_line)
                 except (ValueError, UnicodeError) as exc:
                     raise JSONRPCError(-32603, "invalid JSON from stdio upstream") from exc
                 try:

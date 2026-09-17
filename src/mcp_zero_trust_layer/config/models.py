@@ -53,6 +53,27 @@ class AuthConfig(BaseModel):
         return self
 
 
+class EvidenceConfig(BaseModel):
+    model_config = {"extra": "forbid"}
+    mode: Literal["off", "observe", "required"] = "off"
+    issuer: str = ""
+    destination: str = ""
+    tenant: str = ""
+    scope: str = ""
+    key_id: str = ""
+    private_key_file: str = ""
+    trust_store: str = ""
+    store: str = "./mcpzt-state/evidence.sqlite3"
+    ttl_seconds: int = Field(default=60, ge=1, le=300)
+
+    @model_validator(mode="after")
+    def complete(self) -> EvidenceConfig:
+        if self.mode != "off" and not all((self.issuer, self.destination, self.tenant, self.scope,
+                                           self.key_id, self.private_key_file, self.trust_store)):
+            raise ValueError("evidence requires issuer/destination/tenant/scope and signing/trust files")
+        return self
+
+
 class ServerConfig(BaseModel):
     name: str
     transport: Literal["http", "stdio"]
@@ -62,6 +83,7 @@ class ServerConfig(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     timeout: float = 30.0
     max_response_bytes: int = 10_485_760
+    evidence: EvidenceConfig = Field(default_factory=EvidenceConfig)
 
     @model_validator(mode="after")
     def validate_target(self) -> ServerConfig:

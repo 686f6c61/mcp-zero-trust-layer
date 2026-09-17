@@ -36,6 +36,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Install package and SDK test dependency
         run: python -m pip install -c constraints.txt -e ".[dev]"
       - name: Verify real SDK smoke is available
@@ -115,6 +118,8 @@ jobs:
           "$RUNNER_TEMP/mcpzt-wheel-smoke/bin/mcpzt" init --config "$RUNNER_TEMP/wheel-smoke.yaml"
           "$RUNNER_TEMP/mcpzt-wheel-smoke/bin/mcpzt" config validate --config "$RUNNER_TEMP/wheel-smoke.yaml"
           "$RUNNER_TEMP/mcpzt-wheel-smoke/bin/mcpzt" config lint --config "$RUNNER_TEMP/wheel-smoke.yaml"
+          "$RUNNER_TEMP/mcpzt-wheel-smoke/bin/mcpzt" evidence demo --directory "$RUNNER_TEMP/wheel-evidence-demo"
+          "$RUNNER_TEMP/mcpzt-wheel-smoke/bin/mcpzt" evidence verify "$RUNNER_TEMP/wheel-evidence-demo/bundle.json" --trust "$RUNNER_TEMP/wheel-evidence-demo/trust.json"
       - name: Upload verified distributions and checksums
         uses: actions/upload-artifact@v4
         with:

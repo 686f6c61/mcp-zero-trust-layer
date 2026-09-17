@@ -1,8 +1,28 @@
 from __future__ import annotations
 
+import json
 from typing import Any, NoReturn
 
 INVALID_REQUEST = "Invalid Request"
+
+
+def strict_json_loads(data: str | bytes) -> Any:
+    """Reject ambiguous JSON at ingress, before a parser can discard duplicate keys."""
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, child in items:
+            if key in value:
+                raise json.JSONDecodeError("duplicate key", "", 0)
+            value[key] = child
+        return value
+
+    def constant(value: str) -> NoReturn:
+        raise json.JSONDecodeError("nonfinite number", "", 0)
+
+    try:
+        return json.loads(data, object_pairs_hook=pairs, parse_constant=constant)
+    except RecursionError as exc:
+        raise json.JSONDecodeError("nesting limit", "", 0) from exc
 
 
 class JSONRPCError(Exception):

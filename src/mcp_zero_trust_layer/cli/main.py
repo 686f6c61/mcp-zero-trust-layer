@@ -40,6 +40,7 @@ from mcp_zero_trust_layer.config.secrets import (
 )
 from mcp_zero_trust_layer.core import RequestContext
 from mcp_zero_trust_layer.errors import ConfigError
+from mcp_zero_trust_layer.evidence.cli import app as evidence_app
 from mcp_zero_trust_layer.identity import Identity
 from mcp_zero_trust_layer.packs import add_pack, list_packs, read_pack
 from mcp_zero_trust_layer.policy import (
@@ -68,6 +69,7 @@ app.add_typer(audit_app, name="audit")
 app.add_typer(approve_app, name="approve")
 app.add_typer(pack_app, name="pack")
 app.add_typer(client_app, name="client")
+app.add_typer(evidence_app, name="evidence")
 
 console = Console()
 CONFIG_FILENAME = "mcpzt.yaml"

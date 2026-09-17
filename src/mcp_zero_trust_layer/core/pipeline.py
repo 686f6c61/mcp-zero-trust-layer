@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import contextlib
+import copy
 import hashlib
 import json
+import sqlite3
 from typing import Any
 from uuid import uuid4
 
@@ -10,6 +13,8 @@ from mcp_zero_trust_layer.audit import AuditLogger
 from mcp_zero_trust_layer.capabilities.filtering import filter_capabilities
 from mcp_zero_trust_layer.config.models import MCPZTConfig, PolicyConfig, ServerConfig
 from mcp_zero_trust_layer.core.context import RequestContext
+from mcp_zero_trust_layer.evidence.protocol import validate_client
+from mcp_zero_trust_layer.evidence.runtime import EvidenceRuntime, local_path
 from mcp_zero_trust_layer.identity import Identity
 from mcp_zero_trust_layer.observability import MetricsCollector
 from mcp_zero_trust_layer.output import OutputEnforcer
@@ -60,6 +65,16 @@ class MCPPipeline:
         self.approvals = ApprovalStore(config.approvals)
         self.approval_notifier = ApprovalNotifier(config.approvals)
         self.metrics = metrics
+        self.evidence: dict[str, EvidenceRuntime] = {}
+        for server in config.servers:
+            if server.evidence.mode != "off":
+                if config.runtime.dry_run or not config.audit.strict:
+                    raise ValueError("evidence requires enforce mode and strict audit")
+                if (config.approvals.backend != "sqlite" or
+                    local_path(config.approvals.path, None) !=
+                        local_path(server.evidence.store, config.config_base_dir)):
+                    raise ValueError("evidence and approvals must share one SQLite database")
+                self.evidence[server.name] = EvidenceRuntime(server.evidence, config.config_base_dir)
 
     def handle(
         self,
@@ -73,6 +88,19 @@ class MCPPipeline:
         try:
             message = require_jsonrpc_message(message)
             server = self._server(server_name)
+            if server_name in self.evidence:
+                try:
+                    validate_client(message)
+                    message = copy.deepcopy(message)
+                except (ValueError, TypeError, RecursionError) as exc:
+                    raise JSONRPCError(-32602, "Invalid evidence-profile request") from exc
+                if message.get("method") not in {
+                    "initialize", "ping", "tools/list", "resources/list", "prompts/list",
+                    "tools/call", *SAFE_NOTIFICATION_METHODS,
+                } or (
+                    message.get("method") == "tools/call" and "id" not in message
+                ):
+                    raise JSONRPCError(-32601, "Evidence profile supports tools/call requests only")
             if is_response(message):
                 raise JSONRPCError(-32600, "Unsolicited responses are not supported")
             if is_notification(message):
@@ -168,6 +196,16 @@ class MCPPipeline:
         request_id: Any,
     ) -> dict[str, Any]:
         approval_id = _extract_approval_id(message)
+        if server.name in self.evidence:
+            if approval_id and decision.policy_id and self.approvals.is_valid_for(
+                approval_id, context, decision.policy_id
+            ):
+                context.metadata["approval_id"] = approval_id
+                context.metadata["approval_policy_id"] = decision.policy_id
+                return self._send_and_enforce_output(
+                    server, _strip_approval_id(message), headers, context, decision, request_id
+                )
+            return self._create_approval_response(context, decision, request_id)
         if approval_id and decision.policy_id and self.approvals.consume_if_valid(
             approval_id, context, decision.policy_id
         ):
@@ -225,10 +263,51 @@ class MCPPipeline:
         decision: PolicyDecision,
         request_id: Any,
     ) -> dict[str, Any]:
+        if server.name in self.evidence and message["method"] == "tools/call":
+            return self._send_with_evidence(server, message, headers, context, decision, request_id)
         upstream_response = self._dispatch(server, message, headers, context, decision)
         if upstream_response is None:
             return _upstream_no_response(request_id)
         return self._enforce_output(context, upstream_response, request_id)
+
+    def _send_with_evidence(
+        self, server: ServerConfig, message: dict[str, Any], headers: dict[str, str] | None,
+        context: RequestContext, decision: PolicyDecision, request_id: Any,
+    ) -> dict[str, Any]:
+        evidence = self.evidence[server.name]
+        operation = None
+        try:
+            consume = None
+            if "approval_policy_id" in context.metadata:
+                def consume(db: sqlite3.Connection) -> bool:
+                    return self.approvals.consume_in_transaction(
+                        db, context.metadata["approval_id"], context,
+                        context.metadata["approval_policy_id"])
+            operation, forwarded = evidence.prepare(message, context, consume)
+            context.metadata["operation_id"] = operation
+            evidence.store.flush(self.audit.log_evidence)
+            upstream_response = self._dispatch(server, forwarded, headers, context, decision)
+            if upstream_response is None:
+                raise ValueError("MISSING_RESPONSE")
+            clean = evidence.observe(operation, upstream_response)
+            response = self._enforce_output(context, clean, request_id)
+            evidence.prepared(operation, response)
+            evidence.store.flush(self.audit.log_evidence)
+            return response
+        except Exception as exc:
+            if isinstance(exc, JSONRPCError) and exc.code == -32052:
+                raise
+            if operation:
+                # If storage is unavailable, the durable dispatch intent remains unresolved.
+                with contextlib.suppress(OSError, ValueError, sqlite3.Error):
+                    evidence.store.record(operation, evidence.config.tenant,
+                                          {"phase": "outcome_unavailable", "effect": "unknown"})
+            # Never expose upstream exception text; no automatic retry after reservation.
+            return error_response(request_id, -32051 if operation else -32050,
+                                  "Execution evidence unavailable; do not repeat automatically"
+                                  if operation else "Evidence prerequisites rejected; not dispatched",
+                                  {"operation_id": operation,
+                                   "effect": "unknown" if operation else "not_dispatched"})
 
     def _dispatch(
         self,
@@ -399,9 +478,12 @@ class MCPPipeline:
             environment=self.config.project.environment,
             correlation_id=f"corr_{uuid4().hex}",
             config_base_dir=self.config.config_base_dir,
-            metadata={"request_binding": hashlib.sha256(json.dumps({
+            metadata={"identity_authority": {"mode": self.config.auth.mode,
+                      "issuer": self.config.auth.issuer, "audience": self.config.auth.audience},
+                      "request_binding": hashlib.sha256(json.dumps({
                 "params": _strip_approval_id(message).get("params", {}),
-                "server": self._server(server_name).model_dump(mode="json"),
+                "server": self._server(server_name).model_dump(mode="json", exclude={"evidence"}
+                    if self._server(server_name).evidence.mode == "off" else None),
                 "policies": [policy.model_dump(mode="json") for policy in self.config.policies],
                 "policy_engine": self.config.policy_engine.model_dump(mode="json"),
             }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()},

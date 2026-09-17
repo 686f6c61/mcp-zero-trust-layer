@@ -1,6 +1,6 @@
 # Production Guide
 
-For 0.4.0 deployment limits, session lifecycle, approval migration and audit semantics, read [SUPPORTED_PROFILE.md](SUPPORTED_PROFILE.md). Client/provider setup is in [CLIENT_COMPATIBILITY.md](CLIENT_COMPATIBILITY.md); conservative validator behavior is in [VALIDATOR_LIMITS.md](VALIDATOR_LIMITS.md).
+For 0.5.0 deployment limits, session lifecycle, approval migration and audit semantics, read [SUPPORTED_PROFILE.md](SUPPORTED_PROFILE.md). Opt-in destination receipts require the storage, key and recovery setup in [EVIDENCE.md](EVIDENCE.md). Client/provider setup is in [CLIENT_COMPATIBILITY.md](CLIENT_COMPATIBILITY.md); conservative validator behavior is in [VALIDATOR_LIMITS.md](VALIDATOR_LIMITS.md).
 
 This guide describes how to run MCP Zero Trust Layer around real MCP servers. It is public operational documentation, so it focuses on deployment posture, safety checks and day-two operations rather than internal build planning.
 
